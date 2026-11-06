@@ -213,6 +213,80 @@ test('update перекрашивает inline-стили от оригинал�
   expect(card.getAttribute('style')).toBe('color:#000');
 });
 
+test('бюджет первого прохода: время сбора и подсчёта переменных засчитывается', async () => {
+  let calls = 0;
+  const now = () => (calls++ === 0 ? 0 : 400); // resolving + counting "took" 400 ms > 300 ms first pass
+  const p = createPipeline(document, { fetchCss: vi.fn(), now }); p.start(cfg());
+  const style = document.querySelector('style:not([data-darkext])')!;
+  expect(style.nextElementSibling?.getAttribute('data-darkext')).not.toBe('mirror'); // pushed out of the sync pass
+  await vi.waitFor(() => expect(style.nextElementSibling?.getAttribute('data-darkext')).toBe('mirror'));
+  expect(p.status()).toBe('ok');
+});
+
+test('бюджет сессии: листы после старта сверх 3000 мс → heavy, новый лист не зеркалируется, update перестраивает применённые', async () => {
+  let t = 0, step = 0;
+  const p = createPipeline(document, { fetchCss: vi.fn(), now: () => (t += step) });
+  const seen: string[] = []; p.onStatus(s => seen.push(s));
+  p.start(cfg());
+  const add = (cls: string) => {
+    const s = document.createElement('style'); s.textContent = `.${cls}{background-color:#fff}`; document.head.append(s); return s;
+  };
+  step = 2000; // every build now measures 2000 ms
+  const a = add('a'), b = add('b');
+  await frame();
+  expect(a.nextElementSibling?.getAttribute('data-darkext')).toBe('mirror'); // 2000 ms spent
+  expect(b.nextElementSibling?.getAttribute('data-darkext')).toBe('mirror'); // 4000 ms spent → heavy
+  expect(p.status()).toBe('heavy');
+  expect(seen).toEqual(['heavy']);
+  const c = add('c');
+  await frame();
+  expect(c.nextElementSibling?.getAttribute('data-darkext')).not.toBe('mirror');
+  step = 0;
+  const before = a.nextElementSibling!.textContent;
+  p.update({ ...cfg(), colors: PRESETS.find(x => x.id === 'oled')!.colors });
+  expect(a.nextElementSibling!.textContent).not.toBe(before);
+  expect(c.nextElementSibling?.getAttribute('data-darkext')).not.toBe('mirror');
+  expect(p.status()).toBe('heavy');
+});
+
+test('fetchCss завершился после detach → ничего не пишется; следующий start работает без повторной загрузки', async () => {
+  let release!: (css: string) => void;
+  const fetchCss = vi.fn(() => new Promise<string>(r => { release = r; }));
+  const link = crossOriginLink('https://cdn.example/late.css');
+  const p = createPipeline(document, { fetchCss }); p.start(cfg());
+  await settle(); // fetch in flight
+  p.detach();
+  release('.late{background-color:#fff}');
+  await settle();
+  expect(document.querySelectorAll('[data-darkext]').length).toBe(0);
+  p.start(cfg()); await settle();
+  expect(link.nextElementSibling?.getAttribute('data-darkext')).toBe('mirror');
+  expect(fetchCss).toHaveBeenCalledTimes(1);
+});
+
+test('удалённый <link> → его зеркало удаляется', async () => {
+  const link = document.createElement('link'); link.rel = 'stylesheet'; document.head.append(link);
+  Object.defineProperty(link, 'sheet', { value: { cssRules: parseCssText('.l{color:#000}'), ownerNode: link } });
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  const mirror = link.nextElementSibling!;
+  expect(mirror.getAttribute('data-darkext')).toBe('mirror');
+  link.remove();
+  await frame();
+  expect(mirror.isConnected).toBe(false);
+  expect(document.querySelectorAll('[data-darkext=mirror]').length).toBe(1);
+});
+
+test('исключение в обработчике load → статус error, наших узлов нет', () => {
+  const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const link = document.createElement('link'); link.rel = 'stylesheet'; document.head.append(link);
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  Object.defineProperty(link, 'sheet', { get() { throw new Error('load boom'); } });
+  link.dispatchEvent(new Event('load'));
+  expect(p.status()).toBe('error');
+  expect(document.querySelectorAll('[data-darkext]').length).toBe(0);
+  expect(err).toHaveBeenCalledWith('[DarkExt]', expect.objectContaining({ message: 'load boom' }));
+});
+
 test('detach идемпотентен', () => {
   const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
   p.detach(); p.detach();

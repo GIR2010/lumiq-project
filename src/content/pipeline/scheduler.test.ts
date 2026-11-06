@@ -34,3 +34,15 @@ test('исключение в отложенной задаче отклоняе
   const tasks = [() => {}, () => { throw new Error('boom'); }];
   await expect(runChunked(tasks, { syncCount: 1, budgetMs: 1000, idle: cb => cb() })).rejects.toThrow('boom');
 });
+
+test('startedAt: работа до вызова засчитывается в оба бюджета', async () => {
+  const done: number[] = [];
+  const queued: Array<() => void> = [];
+  const tasks = [0, 1].map(i => () => { done.push(i); });
+  const p = runChunked(tasks, { syncCount: 2, budgetMs: 1000, syncBudgetMs: 300, startedAt: 0, now: () => 400, idle: cb => { queued.push(cb); } });
+  expect(done).toEqual([]); // 400 ms already spent ≥ 300 ms first-pass cap
+  while (queued.length) queued.shift()!();
+  expect(await p).toBe('done');
+  expect(done).toEqual([0, 1]);
+  expect(await runChunked([() => {}], { syncCount: 0, budgetMs: 300, startedAt: 0, now: () => 400, idle: cb => cb() })).toBe('budget');
+});

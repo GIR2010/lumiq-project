@@ -11,7 +11,11 @@ import { runChunked } from './scheduler';
 import { countVarUsage, extractImports, parseCssText, readRules } from './sheets';
 import { StyleWriter } from './writer';
 
-export interface PipelineDeps { fetchCss(url: string): Promise<string> }
+export interface PipelineDeps {
+  fetchCss(url: string): Promise<string>;
+  /** Clock for the budgets (default `performance.now`); injectable for tests. */
+  now?: () => number;
+}
 export type PipelineStatus = 'ok' | 'heavy' | 'error';
 export interface Pipeline {
   start(cfg: EffectiveConfig): void; update(cfg: EffectiveConfig): void; detach(): void;
@@ -63,6 +67,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   /** Raw cross-origin CSS by URL; survives update/detach so nothing is fetched twice. */
   const rawCss = new Map<string, Promise<string>>();
   const statusListeners: Array<(s: PipelineStatus) => void> = [];
+  /** Sources that currently have a mirror. Once the budget is spent only these are rebuilt. */
+  const mirrored = new Set<Source>();
+  const now = deps.now ?? (() => performance.now());
 
   let running = false;
   let disabled = false;
@@ -73,6 +80,8 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   let session = 0;
   /** Bumped by every schedule and by detach: chunks of an older run become no-ops. */
   let runId = 0;
+  /** Build time spent in this session (start + everything after it, update included). */
+  let spentMs = 0;
 
   function setStatus(s: PipelineStatus): void {
     if (s === current) return;
@@ -90,6 +99,25 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
 
   function guard(f: () => void): void {
     try { f(); } catch (e) { fail(e); }
+  }
+
+  const exhausted = () => spentMs >= BUDGET_MS;
+
+  /** Runs `f`, charging its time to the session budget; crossing the budget makes the status 'heavy'. */
+  function charge(f: () => void, t0 = now()): void {
+    try {
+      f();
+    } finally {
+      spentMs += now() - t0;
+      if (running && exhausted()) setStatus('heavy');
+    }
+  }
+
+  /** Over budget, sheets without a mirror are left alone (applied ones are still rebuilt). */
+  function blocked(source: Source): boolean {
+    if (mirrored.has(source) || !exhausted()) return false;
+    setStatus('heavy');
+    return true;
   }
 
   // --- rules, counting, mirrors ---
@@ -131,14 +159,19 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     if (rules) countRules(rules);
   }
 
+  function unmirror(source: Source): void {
+    mirrored.delete(source);
+    writer.removeMirror(source);
+  }
+
   function forget(source: Source): void {
     entries.delete(source);
-    writer.removeMirror(source);
+    unmirror(source);
   }
 
   function build(item: Item): void {
     const { source, entry } = item;
-    if (!fn || entries.get(source) !== entry) return;
+    if (!fn || entries.get(source) !== entry || blocked(source)) return;
     if (source instanceof Element && !source.isConnected) {
       forget(source);
       return;
@@ -147,9 +180,10 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     if (!rules) return;
     const css = mirrorCss(rules, fn);
     if (!css) {
-      writer.removeMirror(source);
+      unmirror(source);
       return;
     }
+    mirrored.add(source);
     if (source instanceof Element) {
       writer.setMirror(source, css, entry.root);
       return;
@@ -159,11 +193,13 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     for (const s of entry.root.adoptedStyleSheets) if (!before.has(s)) ownSheets.add(s);
   }
 
-  /** Count + build right away (observer, load, fetch, refresh paths). */
+  /** Count + build right away (observer, load, fetch, refresh paths), charged to the session budget. */
   function processNow(item: Item | null): void {
-    if (!item) return;
-    count(item);
-    build(item);
+    if (!item || blocked(item.source)) return;
+    charge(() => {
+      count(item);
+      build(item);
+    });
   }
 
   // --- resolving sources (pending / cross-origin / readable) ---
@@ -300,7 +336,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   }
 
   /** <head> sheets (≤ FIRST_PASS_RULES) and inline styles go first and synchronously; the rest in idle chunks. */
-  function schedule(items: Item[], styled: Element[]): void {
+  function schedule(items: Item[], styled: Element[], startedAt: number): void {
     const id = ++runId;
     const task = (f: () => void) => () => { if (id === runId && running) f(); };
     const head = items.filter((i) => isInHead(i.source));
@@ -319,9 +355,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
         inlineTasks.push(task(() => applyInline(batch)));
       }
     }
-    const buildTask = (i: Item) => task(() => build(i));
+    const buildTask = (i: Item) => task(() => charge(() => build(i)));
     const tasks = [...head.slice(0, n).map(buildTask), ...inlineTasks, ...head.slice(n).map(buildTask), ...rest.map(buildTask)];
-    runChunked(tasks, { syncCount: n + inlineTasks.length, budgetMs: BUDGET_MS, syncBudgetMs: FIRST_PASS_MS }).then(
+    runChunked(tasks, { syncCount: n + inlineTasks.length, budgetMs: BUDGET_MS, syncBudgetMs: FIRST_PASS_MS, startedAt, now }).then(
       (res) => { if (id === runId && running && res === 'budget') setStatus('heavy'); },
       (e) => { if (id === runId && running) fail(e); },
     );
@@ -355,8 +391,8 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   function attachRoot(root: ShadowRoot): void {
     pruneAdopted(root);
     const items = resolveAll(root);
-    items.forEach(count);
-    items.forEach(build);
+    charge(() => items.forEach(count));
+    for (const item of items) charge(() => build(item));
     applyInline(styledIn(root));
     observe(root);
   }
@@ -371,14 +407,19 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     if (running) detach();
     setStatus('ok');
     guard(() => {
+      const t0 = now(); // resolving and counting are charged to the first pass
       running = true;
       session++;
+      spentMs = 0;
       fn = makeColorFn(cfg);
       vars = new VarRoleCounter();
       writer.setBase(buildBaseCss(cfg.colors, fn, cfg.adj));
-      const items = resolveAll(doc);
-      items.forEach(count);
-      schedule(items, styledIn(doc));
+      let items: Item[] = [];
+      charge(() => {
+        items = resolveAll(doc);
+        items.forEach(count);
+      }, t0);
+      schedule(items, styledIn(doc), t0);
       observe(doc);
       for (const r of [...roots]) {
         if (r.host.isConnected) attachRoot(r);
@@ -393,14 +434,15 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       return;
     }
     guard(() => {
-      setStatus('ok');
+      const t0 = now();
+      setStatus(exhausted() ? 'heavy' : 'ok'); // same session: the budget already spent still counts
       fn = makeColorFn(cfg);
       vars = new VarRoleCounter();
       const items = [...entries].map(([source, entry]) => ({ source, entry }));
-      items.forEach(count);
+      charge(() => items.forEach(count), t0);
       writer.setBase(buildBaseCss(cfg.colors, fn, cfg.adj));
       inline.restoreAll(); // apply() skips elements it already styled; start again from the originals
-      schedule(items, allStyled());
+      schedule(items, allStyled(), t0);
     });
   }
 
@@ -417,6 +459,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     safe(() => inline.restoreAll());
     safe(() => writer.clear());
     entries.clear();
+    mirrored.clear();
   }
 
   function setDisabled(d: boolean): void {

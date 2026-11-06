@@ -35,3 +35,28 @@ test('isOwnMutation: apply и restoreAll — свои, изменение стр
   recs = mo.takeRecords(); expect(recs.some((r) => s.isOwnMutation(r))).toBe(false);
   mo.disconnect();
 });
+
+// The page edits an element we styled: our colours must not become its "originals".
+for (const reapply of [false, true]) {
+  const how = reapply ? 'с apply после правки' : 'без apply после правки';
+  test(`страница меняет не-цветовое свойство → restoreAll возвращает исходный цвет и сохраняет правку (${how})`, () => {
+    document.body.innerHTML = '<div id="d" style="color:#000"></div>';
+    const s = new InlineStyler(); const d = document.getElementById('d')!;
+    s.apply(d, fn); expect(d.style.color).toBe('rgb(238, 238, 238)');
+    d.style.width = '10px';
+    if (reapply) { s.apply(d, fn); expect(d.style.color).toBe('rgb(238, 238, 238)'); }
+    s.restoreAll();
+    expect(d.style.color).toBe('rgb(0, 0, 0)');
+    expect(d.style.width).toBe('10px');
+  });
+  test(`страница сама меняет цвет → restoreAll оставляет цвет страницы (${how})`, () => {
+    document.body.innerHTML = '<div id="d" style="color:#000; background-color:#fff"></div>';
+    const s = new InlineStyler(); const d = document.getElementById('d')!;
+    s.apply(d, fn);
+    d.style.color = 'red';
+    if (reapply) { s.apply(d, fn); expect(d.style.color).toBe('rgb(238, 238, 238)'); }
+    s.restoreAll();
+    expect(d.style.color).toBe('red');
+    expect(d.style.backgroundColor).toBe('rgb(255, 255, 255)');
+  });
+}

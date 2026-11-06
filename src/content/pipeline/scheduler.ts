@@ -5,6 +5,8 @@ export interface ChunkOptions {
   budgetMs: number;
   /** Optional cap on the synchronous pass; tasks past it move to idle chunks. */
   syncBudgetMs?: number;
+  /** Clock value the budgets are measured from (default: now() at the call), so earlier work can be charged. */
+  startedAt?: number;
   now?: () => number;
   idle?: (cb: () => void) => void;
 }
@@ -21,12 +23,12 @@ function defaultIdle(cb: () => void): void {
 
 /**
  * Runs the first `syncCount` tasks synchronously, the rest in idle-time slices until `budgetMs`
- * (from the call) runs out. A task that throws rejects the promise (or throws, in the sync pass).
+ * (from `startedAt`, default the call) runs out. A task that throws rejects the promise (or throws, in the sync pass).
  */
 export function runChunked(tasks: Array<() => void>, opts: ChunkOptions): Promise<'done' | 'budget'> {
   const now = opts.now ?? (() => performance.now());
   const idle = opts.idle ?? defaultIdle;
-  const start = now();
+  const start = opts.startedAt ?? now();
   const elapsed = () => now() - start;
   let i = 0;
   const syncEnd = Math.min(opts.syncCount, tasks.length);
