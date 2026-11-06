@@ -6,7 +6,7 @@
 
 type Fn = (this: unknown, ...args: unknown[]) => unknown;
 
-function dispatch(target: EventTarget | null | undefined, type: string, init: CustomEventInit = {}): void {
+function dispatch(target: EventTarget | null | undefined, type: string, init: CustomEventInit = { bubbles: true, composed: true }): void {
   try {
     (target ?? document).dispatchEvent(new CustomEvent(type, init));
   } catch {
@@ -84,8 +84,21 @@ function install(): void {
         dispatch((sheet as CSSStyleSheet).ownerNode, 'darkext:sheet-changed');
       });
     };
-    for (const m of ['insertRule', 'deleteRule', 'replace', 'replaceSync']) {
+    for (const m of ['insertRule', 'deleteRule', 'replaceSync']) {
       if (m in CSSStyleSheet.prototype) wrapMethod(CSSStyleSheet.prototype, m, (self) => notify(self));
+    }
+    if ('replace' in CSSStyleSheet.prototype) {
+      // replace() swaps rules asynchronously: notify only once the promise fulfils.
+      // Attaching a handler marks a rejection as handled on this derived promise only;
+      // the original promise is returned unchanged, so the page still sees its rejection.
+      wrapMethod(CSSStyleSheet.prototype, 'replace', (self, result) => {
+        if (result && typeof (result as Promise<unknown>).then === 'function') {
+          (result as Promise<unknown>).then(
+            () => notify(self),
+            () => {},
+          );
+        }
+      });
     }
   }
 
