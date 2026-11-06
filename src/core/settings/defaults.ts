@@ -1,4 +1,4 @@
-import type { Adjustments, GlobalSettings } from './schema';
+import type { Adjustments, GlobalSettings } from './schema-types';
 
 export const SCHEMA_VERSION = 1;
 

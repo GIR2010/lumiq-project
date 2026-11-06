@@ -1,6 +1,6 @@
 import { parseColor } from '../color';
 import type { ColorFn, RuleContext } from '../mapping/types';
-import type { Adjustments, StyleColors } from '../settings/schema';
+import type { Adjustments, StyleColors } from '../settings/schema-types';
 
 export function buildBaseCss(colors: StyleColors, fn: ColorFn, adj: Adjustments): string {
   const ctx: RuleContext = { selector: 'html', isLink: false, isVisited: false };

@@ -79,7 +79,15 @@ export function createController(doc: Document, deps: ControllerDeps) {
 
   return {
     async start(): Promise<void> {
-      cfg = await deps.getConfig();
+      try {
+        cfg = await deps.getConfig();
+      } catch {
+        // Config unavailable (not "unsupported"): leave the page alone, drop the placeholder, report an error.
+        if (stopped) return;
+        removePlaceholder();
+        report({ status: 'error', detectedDark: false });
+        return;
+      }
       if (stopped) return;
       sys.onChange(evaluate);
       pipeline.onStatus(() => { refreshReport(); });

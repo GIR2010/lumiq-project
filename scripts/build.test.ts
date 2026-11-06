@@ -10,3 +10,7 @@ test('сборка создаёт все входы манифеста', () => {
   expect(m.host_permissions).toEqual(['<all_urls>']);
   expect(readFileSync('dist/content.js', 'utf8')).not.toMatch(/^\s*import\s/m); // IIFE, без ESM
 }, 120_000);
+
+test('content.js не содержит zod', () => {
+  expect(readFileSync('dist/content.js', 'utf8')).not.toContain('ZodError');
+});

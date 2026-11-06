@@ -1,5 +1,5 @@
 import type { EffectiveConfig, ApplyStatus } from '../core/settings/resolve';
-import type { GlobalSettings, SiteSettings, UserStyle } from '../core/settings/schema';
+import type { GlobalSettings, SiteSettings, UserStyle } from '../core/settings/schema-types';
 import type { Patch } from '../core/settings/patch';
 
 export type TabStatus = ApplyStatus | 'error' | 'heavy' | 'unsupported';

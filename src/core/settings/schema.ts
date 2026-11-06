@@ -1,34 +1,7 @@
 import { z } from 'zod';
+import { STYLE_KEYS, type StyleKey } from './schema-types';
 
-export const STYLE_KEYS = [
-  'bg', 'surface', 'elevated', 'text', 'textMuted', 'onAccent', 'link',
-  'linkVisited', 'border', 'accent', 'success', 'warning', 'danger', 'selection',
-] as const;
-export type StyleKey = (typeof STYLE_KEYS)[number];
-export type StyleColors = Record<StyleKey, string>;
-
-export type Engine = 'adaptive' | 'style';
-
-export interface Adjustments { br: number; ct: number; sp: number; gs: number; img: number }
-export interface GlobalSettings {
-  v: number;
-  def: 'on' | 'off';
-  sys: boolean;
-  eng: Engine;
-  st: string;
-  adj: Adjustments;
-  keepBgImages: boolean;
-}
-export interface UserStyle { id: string; name: string; c: StyleColors }
-export type OverrideRule = [string, string | null, string | null, string | null, number];
-export interface SiteSettings {
-  on?: boolean;
-  eng?: Engine;
-  st?: string;
-  adj?: Partial<Adjustments>;
-  det?: true;
-  r?: OverrideRule[];
-}
+export * from './schema-types';
 
 const Hex = z.string().regex(/^#[0-9a-f]{6}$/i);
 const EngineSchema = z.enum(['adaptive', 'style']);

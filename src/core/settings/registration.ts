@@ -1,4 +1,4 @@
-import type { GlobalSettings, SiteSettings } from './schema';
+import type { GlobalSettings, SiteSettings } from './schema-types';
 
 export interface Registration {
   file: 'placeholder.js' | 'placeholder-sys.js';

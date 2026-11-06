@@ -1,13 +1,11 @@
 import { classifyDarkness } from '../core/detect';
 import type { EffectiveConfig } from '../core/settings/resolve';
-import { sendToBackground, type ContentMessage, type Request, type ResponseOf } from '../shared/messages';
+import { sendToBackground, type ContentMessage } from '../shared/messages';
 import { createController } from './controller';
 import { readSchemeSignals, sampleBackgrounds } from './detector';
+import { createMessenger, isInvalidated } from './messaging';
 import { createPipeline } from './pipeline/pipeline';
 
-const INVALIDATED = /extension context invalidated/i;
-const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 let controller: ReturnType<typeof createController> | null = null;
 let dead = false;
@@ -21,34 +19,17 @@ function die(): void {
   document.removeEventListener('darkext:sheet-changed', onSheetG, true);
 }
 
-/** Sends to the service worker; one retry after 100 ms (it may be waking up). Invalidated context → stop quietly. */
-async function send<R extends Request>(msg: R, retry = false): Promise<ResponseOf<R>> {
-  try {
-    return await sendToBackground(msg);
-  } catch (e) {
-    if (INVALIDATED.test(errText(e))) { die(); throw e; }
-    if (!retry) throw e;
-    await wait(100);
-    try {
-      return await sendToBackground(msg);
-    } catch (e2) {
-      if (INVALIDATED.test(errText(e2))) die();
-      throw e2;
-    }
-  }
-}
+const messenger = createMessenger({ sendMessage: sendToBackground, wait: (ms) => new Promise((r) => setTimeout(r, ms)), onInvalidated: die });
+const { send } = messenger;
 
-const pipeline = createPipeline(document, {
-  async fetchCss(url) {
-    const res = await send({ type: 'FETCH_CSS', url });
-    if ('error' in res) throw new Error(res.error);
-    return res.text;
-  },
-});
+const pipeline = createPipeline(document, { fetchCss: messenger.fetchCss });
 
 const mql = window.matchMedia('(prefers-color-scheme: dark)');
 controller = createController(document, {
-  getConfig: () => send({ type: 'GET_CONFIG' }, true).catch(() => null),
+  getConfig: () => send({ type: 'GET_CONFIG' }, true).catch((e) => {
+    if (!isInvalidated(e)) console.warn('[DarkExt] GET_CONFIG failed', e);
+    throw e;
+  }),
   report: (state) => { send({ type: 'REPORT_STATE', state }).catch(() => {}); },
   pipeline,
   matchDark: () => ({ get matches() { return mql.matches; }, onChange: (cb) => mql.addEventListener('change', cb) }),
@@ -107,4 +88,4 @@ try {
   });
 } catch { die(); }
 
-controller.start().catch((e) => { if (INVALIDATED.test(errText(e))) die(); });
+controller.start().catch((e) => { if (isInvalidated(e)) die(); });

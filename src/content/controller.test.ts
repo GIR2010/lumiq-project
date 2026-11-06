@@ -69,3 +69,8 @@ test('stop: после остановки события игнорируютс�
   fire.sys(false); fire.domReady();
   expect(pipeline.detach).not.toHaveBeenCalled(); expect(pipeline.setDisabled).not.toHaveBeenCalled();
 });
+test('getConfig отклонён → заглушка удалена, статус error (не unsupported), ничего не применено', async () => {
+  const { c, pipeline, deps } = setup({ getConfig: async () => { throw new Error('boom'); } }); await c.start();
+  expect(pipeline.start).not.toHaveBeenCalled(); expect(document.querySelector('[data-darkext=placeholder]')).toBeNull();
+  expect(deps.report).toHaveBeenLastCalledWith({ status: 'error', detectedDark: false });
+});

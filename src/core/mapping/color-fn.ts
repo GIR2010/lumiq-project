@@ -1,5 +1,5 @@
 import { formatColor, parseColor, type Oklch } from '../color';
-import type { Adjustments, StyleColors } from '../settings/schema';
+import type { Adjustments, StyleColors } from '../settings/schema-types';
 import { applyAdjustments } from './adjust';
 import type { ColorFn, ColorMapper, Role, RuleContext } from './types';
 

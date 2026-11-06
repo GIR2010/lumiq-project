@@ -1,5 +1,5 @@
 import type { Oklch } from '../color';
-import type { Adjustments } from '../settings/schema';
+import type { Adjustments } from '../settings/schema-types';
 
 const SEPIA = { l: 0.6, c: 0.05, h: 70 };
 

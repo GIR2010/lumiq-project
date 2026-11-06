@@ -1,5 +1,5 @@
 import { isNeutral, parseColor, type Oklch } from '../color';
-import type { StyleColors } from '../settings/schema';
+import type { StyleColors } from '../settings/schema-types';
 import type { ColorMapper, Role, RuleContext } from './types';
 
 const BG_OFFSET_MIN = 0.06;

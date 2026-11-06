@@ -1,4 +1,4 @@
-import type { GlobalSettings, SiteSettings } from './schema';
+import type { GlobalSettings, SiteSettings } from './schema-types';
 
 export type Patch<T> = { [K in keyof T]?: T[K] | null };
 

@@ -1,5 +1,5 @@
 import { findStyle } from './presets';
-import type { Adjustments, Engine, GlobalSettings, OverrideRule, SiteSettings, StyleColors, UserStyle } from './schema';
+import type { Adjustments, Engine, GlobalSettings, OverrideRule, SiteSettings, StyleColors, UserStyle } from './schema-types';
 
 export interface EffectiveConfig {
   host: string; enabled: boolean; followSystem: boolean; ignoreDetection: boolean;

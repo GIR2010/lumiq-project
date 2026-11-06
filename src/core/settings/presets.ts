@@ -1,4 +1,4 @@
-import { STYLE_KEYS, type StyleColors, type UserStyle } from './schema';
+import { STYLE_KEYS, type StyleColors, type UserStyle } from './schema-types';
 
 export type PresetId = 'graphite' | 'midnight' | 'oled' | 'warm' | 'contrast';
 
