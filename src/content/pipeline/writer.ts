@@ -6,6 +6,8 @@ export class StyleWriter {
   private mirrors = new Map<Source, HTMLStyleElement | CSSStyleSheet>();
   private adopted = new Map<CSSStyleSheet, Document | ShadowRoot>();
   private disabled = false;
+  /** The `media` each mirror element should have when enabled (copied from its source). */
+  private media = new Map<HTMLStyleElement, string | null>();
 
   constructor(private doc: Document) {}
 
@@ -13,12 +15,17 @@ export class StyleWriter {
     const el = this.doc.createElement('style');
     el.setAttribute('data-darkext', kind);
     el.textContent = css;
-    if (this.disabled) el.setAttribute('media', 'not all');
     return el;
   }
 
+  private applyMedia(el: HTMLStyleElement): void {
+    const wanted = this.disabled ? 'not all' : (this.media.get(el) ?? null);
+    if (wanted === null) el.removeAttribute('media');
+    else el.setAttribute('media', wanted);
+  }
+
   /** Puts base first in <head> (or documentElement while there is no head); moves it into head once it appears. */
-  private ensureHead(): void {
+  ensureBaseFirst(): void {
     const el = this.base;
     if (!el) return;
     const parent: Element | null = this.doc.head ?? this.doc.documentElement;
@@ -29,7 +36,8 @@ export class StyleWriter {
   setBase(css: string): void {
     if (!this.base) this.base = this.make('base', css);
     else this.base.textContent = css;
-    this.ensureHead();
+    this.applyMedia(this.base);
+    this.ensureBaseFirst();
   }
 
   setMirror(source: Source, css: string, root: Document | ShadowRoot = this.doc): void {
@@ -41,9 +49,14 @@ export class StyleWriter {
         sheet = new CSSStyleSheet();
         this.mirrors.set(source, sheet);
         this.adopted.set(sheet, root);
-        root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet];
       }
       sheet.replaceSync(css);
+      // Keep the mirror immediately after its source in the cascade order.
+      const others = root.adoptedStyleSheets.filter((x) => x !== sheet);
+      const at = others.indexOf(source);
+      const next = at < 0 ? [...others, sheet] : [...others.slice(0, at + 1), sheet, ...others.slice(at + 1)];
+      const cur = root.adoptedStyleSheets;
+      if (next.length !== cur.length || next.some((x, i) => x !== cur[i])) root.adoptedStyleSheets = next;
       sheet.disabled = this.disabled;
       return;
     }
@@ -54,6 +67,8 @@ export class StyleWriter {
     } else {
       el.textContent = css;
     }
+    this.media.set(el, source.getAttribute('media'));
+    this.applyMedia(el);
     if (el.previousSibling !== source || el.parentNode !== source.parentNode) {
       source.parentNode?.insertBefore(el, source.nextSibling);
     }
@@ -72,6 +87,7 @@ export class StyleWriter {
       this.adopted.delete(m);
       if (root) root.adoptedStyleSheets = root.adoptedStyleSheets.filter((s) => s !== m);
     } else {
+      this.media.delete(m);
       m.remove();
     }
   }
@@ -81,8 +97,7 @@ export class StyleWriter {
     for (const m of [this.base, ...this.mirrors.values()]) {
       if (!m) continue;
       if (m instanceof CSSStyleSheet) m.disabled = disabled;
-      else if (disabled) m.setAttribute('media', 'not all');
-      else m.removeAttribute('media');
+      else this.applyMedia(m);
     }
   }
 
