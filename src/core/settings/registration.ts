@@ -6,8 +6,11 @@ export interface Registration {
   excludeMatches: string[];
 }
 
+/** IPv4 or bracketed IPv6 literal (as URL.hostname gives them): "www." + IP is not a valid pattern host. */
+const isIpHost = (h: string) => h.startsWith('[') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(h);
+
 const patterns = (h: string): string[] =>
-  h.startsWith('www.') ? [`*://${h}/*`] : [`*://${h}/*`, `*://www.${h}/*`];
+  h.startsWith('www.') || isIpHost(h) ? [`*://${h}/*`] : [`*://${h}/*`, `*://www.${h}/*`];
 
 export function computeRegistration(
   g: GlobalSettings, sites: Record<string, SiteSettings>,
