@@ -1,0 +1,34 @@
+:root {
+  --bg: #1e1f22; --surface: #26282c; --elevated: #303236; --text: #e3e3e3;
+  --text-muted: #a0a4ab; --on-accent: #10141a; --border: #3c3f44; --accent: #6ea8fe;
+  --warning: #e8b04a;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff; --surface: #f3f4f6; --elevated: #e5e7eb; --text: #1f2328;
+    --text-muted: #5b6270; --on-accent: #ffffff; --border: #d0d4da; --accent: #1a6fe0;
+    --warning: #9a6700;
+    color-scheme: light;
+  }
+}
+body { margin: 0; background: var(--bg); color: var(--text); font: 13px system-ui, sans-serif; }
+.popup { width: 360px; box-sizing: border-box; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+header, footer, section { display: flex; flex-direction: column; gap: 8px; }
+header { flex-direction: row; justify-content: space-between; align-items: center; }
+.status { color: var(--text-muted); }
+.status-error, .status-heavy { color: var(--warning); }
+.row-label { color: var(--text-muted); }
+.segmented { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg { flex: 1; padding: 6px 8px; border: 0; background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
+.seg-on { background: var(--accent); color: var(--on-accent); }
+.banner { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.banner p { margin: 0; }
+button:not(.seg) { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--elevated); color: var(--text); cursor: pointer; font: inherit; }
+.style-select { display: flex; align-items: center; gap: 8px; }
+.style-select select { flex: 1; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
+.swatches { display: flex; gap: 2px; }
+.swatches i { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); }
+.slider { display: grid; grid-template-columns: 90px 1fr 32px; align-items: center; gap: 8px; }
+.slider output { text-align: right; color: var(--text-muted); }
+input[type=range] { accent-color: var(--accent); }
