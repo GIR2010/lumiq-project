@@ -5,7 +5,9 @@ const ID = 'darkext-placeholder';
 // undefined = unknown in this worker lifetime; null = known to be unregistered.
 let last: Registration | null | undefined;
 
-export function resetRegistrationCache(): void { last = undefined; }
+let queue: Promise<void> = Promise.resolve();
+
+export function resetRegistrationCache(): void { last = undefined; queue = Promise.resolve(); }
 
 const same = (a: Registration, b: Registration) =>
   a.file === b.file
@@ -22,7 +24,12 @@ const fromScript = (s: chrome.scripting.RegisteredContentScript): Registration =
   matches: s.matches ?? [], excludeMatches: s.excludeMatches ?? [],
 });
 
-export async function syncRegistration(reg: Registration | null): Promise<void> {
+/** Calls are serialized so concurrent changes never interleave API calls; doSync never rejects. */
+export function syncRegistration(reg: Registration | null): Promise<void> {
+  return (queue = queue.then(() => doSync(reg)));
+}
+
+async function doSync(reg: Registration | null): Promise<void> {
   try {
     if (last === undefined) {
       const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [ID] });

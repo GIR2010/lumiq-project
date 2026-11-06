@@ -53,3 +53,13 @@ test('сбой API не бросает исключение', async () => {
   expect(warn).toHaveBeenCalled();
   warn.mockRestore();
 });
+
+test('параллельные вызовы сериализуются: один register, затем один update, итог = последний', async () => {
+  const b = { ...reg, excludeMatches: ['*://a.com/*'] };
+  const p1 = syncRegistration(reg);
+  const p2 = syncRegistration(b);
+  await Promise.all([p1, p2]);
+  expect(fake.scripting.registerContentScripts).toHaveBeenCalledTimes(1);
+  expect(fake.scripting.updateContentScripts).toHaveBeenCalledTimes(1);
+  expect(await chrome.scripting.getRegisteredContentScripts({ ids: ['darkext-placeholder'] })).toEqual([asScript(b)]);
+});

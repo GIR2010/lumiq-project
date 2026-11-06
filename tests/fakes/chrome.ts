@@ -61,6 +61,7 @@ export function installFakeChrome() {
     session: makeArea('session', changed.listeners),
     onChanged: changed,
   };
+  const registered = new Map<string, { id: string }>();
   const fake = {
     storage,
     runtime: {
@@ -75,10 +76,19 @@ export function installFakeChrome() {
       onRemoved: makeEvent<(...a: any[]) => void>(),
     },
     scripting: {
-      registerContentScripts: vi.fn(async (_s: unknown) => undefined),
-      updateContentScripts: vi.fn(async (_s: unknown) => undefined),
-      unregisterContentScripts: vi.fn(async (_f?: unknown) => undefined),
-      getRegisteredContentScripts: vi.fn(async (_f?: unknown) => [] as unknown[]),
+      registerContentScripts: vi.fn(async (scripts: { id: string }[]) => {
+        for (const sc of scripts) if (registered.has(sc.id)) throw new Error(`Duplicate script ID '${sc.id}'`);
+        for (const sc of scripts) registered.set(sc.id, clone(sc));
+      }),
+      updateContentScripts: vi.fn(async (scripts: { id: string }[]) => {
+        for (const sc of scripts) if (!registered.has(sc.id)) throw new Error(`Nonexistent script ID '${sc.id}'`);
+        for (const sc of scripts) registered.set(sc.id, { ...(registered.get(sc.id) as object), ...clone(sc) } as { id: string });
+      }),
+      unregisterContentScripts: vi.fn(async (f?: { ids?: string[] }) => {
+        for (const id of f?.ids ?? [...registered.keys()]) registered.delete(id);
+      }),
+      getRegisteredContentScripts: vi.fn(async (f?: { ids?: string[] }) =>
+        [...registered.values()].filter((sc) => !f?.ids || f.ids.includes(sc.id)).map((sc) => clone(sc)) as unknown[]),
     },
     action: {
       setBadgeText: vi.fn(async (_d: unknown) => undefined),
