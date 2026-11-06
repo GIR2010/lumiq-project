@@ -102,9 +102,8 @@ function mapTokens(value: string, role: Role, fn: ColorFn, ctx: RuleContext): Ma
   return { text: out, changed };
 }
 
-export function mapDeclarationValue(prop: string, value: string, fn: ColorFn, ctx: RuleContext): string | null {
-  const role = roleOf(prop);
-  if (!role) return null;
+/** Maps colors in `value` using an explicit role (e.g. for custom properties). Null when nothing changed. */
+export function mapValueWithRole(value: string, role: Role, fn: ColorFn, ctx: RuleContext, prop = ''): string | null {
   if (value.toLowerCase().includes('color-mix(')) return null;
   if (prop.trim().toLowerCase() === 'background-image') {
     const v = value.toLowerCase();
@@ -112,6 +111,12 @@ export function mapDeclarationValue(prop: string, value: string, fn: ColorFn, ct
   }
   const r = mapTokens(value, role, fn, ctx);
   return r.changed ? r.text : null;
+}
+
+export function mapDeclarationValue(prop: string, value: string, fn: ColorFn, ctx: RuleContext): string | null {
+  const role = roleOf(prop);
+  if (!role) return null;
+  return mapValueWithRole(value, role, fn, ctx, prop);
 }
 
 export function isLinkSelector(selector: string): { isLink: boolean; isVisited: boolean } {
