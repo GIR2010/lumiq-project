@@ -20,6 +20,8 @@ export class SettingsStore {
   private pending = new Map<string, { value: unknown; timer: ReturnType<typeof setTimeout> }>();
   private lastWritten = new Map<string, unknown>();
   private debounceMs: number;
+  private loading = true;
+  private touched = new Set<string>();
 
   constructor(opts: { debounceMs?: number } = {}) {
     this.debounceMs = opts.debounceMs ?? 500;
@@ -27,7 +29,13 @@ export class SettingsStore {
       if (area !== 'sync') return;
       let changed = false;
       for (const [key, ch] of Object.entries(changes)) {
-        if (this.lastWritten.has(key) && same(this.lastWritten.get(key), ch.newValue)) continue;
+        if (this.lastWritten.has(key) && same(this.lastWritten.get(key), ch.newValue)) {
+          this.lastWritten.delete(key); // echo consumed once
+          continue;
+        }
+        if (this.pending.has(key)) continue; // local pending write wins
+        this.lastWritten.delete(key);
+        if (this.loading) this.touched.add(key);
         if (this.applyRecord(key, ch.newValue)) changed = true;
       }
       if (changed) this.emit();
@@ -69,6 +77,7 @@ export class SettingsStore {
   }
 
   private schedule(key: string, value: unknown): void {
+    if (this.loading) this.touched.add(key);
     const prev = this.pending.get(key);
     if (prev) clearTimeout(prev.timer);
     const timer = setTimeout(() => { void this.write(key); }, this.debounceMs);
@@ -81,13 +90,30 @@ export class SettingsStore {
     clearTimeout(entry.timer);
     this.pending.delete(key);
     this.lastWritten.set(key, entry.value);
-    if (entry.value === undefined) await chrome.storage.sync.remove(key);
-    else await chrome.storage.sync.set({ [key]: entry.value });
+    try {
+      if (entry.value === undefined) await chrome.storage.sync.remove(key);
+      else await chrome.storage.sync.set({ [key]: entry.value });
+    } catch (e) {
+      this.lastWritten.delete(key);
+      console.warn('[DarkExt] settings write failed', key, e);
+    }
   }
 
   private async load(): Promise<void> {
-    const all = await chrome.storage.sync.get(null);
-    for (const [key, value] of Object.entries(all)) this.applyRecord(key, value);
+    let changed = false;
+    try {
+      const all = await chrome.storage.sync.get(null);
+      for (const [key, value] of Object.entries(all)) {
+        if (this.pending.has(key) || this.touched.has(key)) continue;
+        if (this.applyRecord(key, value)) changed = true;
+      }
+    } catch (e) {
+      console.warn('[DarkExt] settings load failed', e);
+    } finally {
+      this.loading = false;
+      this.touched.clear();
+    }
+    if (changed) this.emit();
   }
 
   /** Validates and applies one stored record; returns true if the in-memory state changed. */

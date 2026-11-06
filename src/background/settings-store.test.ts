@@ -61,11 +61,11 @@ test('внешнее изменение с другого устройства �
 
 test('эхо собственной записи игнорируется', async () => {
   const s = new SettingsStore(); await s.ready;
-  s.updateSite('a.com', { on: true });
-  await vi.advanceTimersByTimeAsync(500);
   const cb = vi.fn(); s.onChange(cb);
-  emit({ 's:a.com': { newValue: { on: true } } });
-  await vi.runAllTimersAsync();
+  s.updateSite("a.com", { on: true });
+  cb.mockClear();
+  await vi.advanceTimersByTimeAsync(500); // fake storage echoes the write via onChanged
+  expect(chrome.storage.sync.set).toHaveBeenCalledTimes(1);
   expect(cb).not.toHaveBeenCalled();
 });
 
@@ -83,4 +83,48 @@ test('flush() пишет всё немедленно', async () => {
   await s.flush();
   expect(((await chrome.storage.sync.get('g')) as any).g.sys).toBe(true);
   expect((await chrome.storage.sync.get('s:a.com'))['s:a.com']).toEqual({ on: true });
+});
+
+test('сбой загрузки: ready резолвится, умолчания, warn', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  (chrome.storage.sync.get as Mock).mockRejectedValueOnce(new Error('boom'));
+  const s = new SettingsStore(); await s.ready;
+  expect(s.snapshot().g).toEqual(DEFAULT_GLOBAL);
+  expect(warn).toHaveBeenCalledWith('[DarkExt] settings load failed', expect.any(Error));
+});
+
+test('updateGlobal до ready не затирается загрузкой', async () => {
+  await chrome.storage.sync.set({ g: { ...DEFAULT_GLOBAL, sys: false, def: 'off' } });
+  const s = new SettingsStore();
+  s.updateGlobal({ def: 'on' });
+  await s.ready;
+  expect(s.snapshot().g.def).toBe('on');
+});
+
+test('эхо потребляется один раз: позднее внешнее значение, равное старой записи, применяется', async () => {
+  const s = new SettingsStore(); await s.ready;
+  s.updateSite('a.com', { on: true });
+  await vi.advanceTimersByTimeAsync(500);
+  emit({ 's:a.com': { newValue: { on: false } } });
+  expect(s.snapshot().sites['a.com']).toEqual({ on: false });
+  emit({ 's:a.com': { newValue: { on: true } } });
+  expect(s.snapshot().sites['a.com']).toEqual({ on: true });
+});
+
+test('внешнее изменение при отложенной записи игнорируется', async () => {
+  const s = new SettingsStore(); await s.ready;
+  s.updateSite('a.com', { on: true });
+  emit({ 's:a.com': { newValue: { on: false } } });
+  await vi.advanceTimersByTimeAsync(500);
+  expect(s.snapshot().sites['a.com']).toEqual({ on: true });
+  expect((await chrome.storage.sync.get('s:a.com'))['s:a.com']).toEqual({ on: true });
+});
+
+test('сбой записи: warn, без необработанного отказа, flush резолвится', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const s = new SettingsStore(); await s.ready;
+  (chrome.storage.sync.set as Mock).mockRejectedValueOnce(new Error('quota'));
+  s.updateGlobal({ sys: true });
+  await expect(s.flush()).resolves.toBeUndefined();
+  expect(warn).toHaveBeenCalledWith('[DarkExt] settings write failed', 'g', expect.any(Error));
 });
