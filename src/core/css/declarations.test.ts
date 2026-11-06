@@ -21,3 +21,9 @@ test('var() с fallback-цветом: заменяется только fallback
   expect(mapDeclarationValue('color', 'var(--x, #000)', fn, ctx)).toBe('var(--x, #eeeeee)'));
 test.each([['a', true, false], ['nav a:hover', true, false], ['a:visited', true, true], ['.btn, a.link', true, false], ['abbr', false, false], ['a span', false, false]])
   ('isLinkSelector(%s)', (s, l, v) => expect(isLinkSelector(s)).toEqual({ isLink: l, isVisited: v }));
+test.each([
+  ['fill', 'url(#blue) red', 'url(#blue) #eeeeee'],
+  ['box-shadow', 'calc(tan(45deg)*1px) 0 red', 'calc(tan(45deg)*1px) 0 #111111'],
+])('opaque spans / function names: %s: %s', (p, v, out) => expect(mapDeclarationValue(p, v, fn, ctx)).toBe(out));
+test.each([['stroke', 'url(#ccc)'], ['fill', 'url(red.svg#a)'], ['color', '"red"'], ['fill', "url('a red.svg')"]])
+  ('%s: %s → null', (p, v) => expect(mapDeclarationValue(p, v, fn, ctx)).toBeNull());

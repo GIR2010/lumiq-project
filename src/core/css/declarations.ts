@@ -20,6 +20,26 @@ export function roleOf(prop: string): Role | null {
 
 const TOKEN = /#[0-9a-f]{3,8}\b|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\([^()]*\)|\b[a-z]+\b/gi;
 
+/** End (exclusive) of an opaque span starting at `start`: a quoted string or url(...). */
+function opaqueEnd(value: string, start: number): number {
+  const isString = value[start] === '"' || value[start] === "'";
+  let i = isString ? start : start + 4; // skip "url("
+  let quote = isString ? value[start] : '';
+  if (isString) i++;
+  for (; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === '\\') i++;
+    else if (quote) {
+      if (ch === quote) {
+        quote = '';
+        if (isString) return i + 1;
+      }
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === ')') return i + 1;
+  }
+  return value.length;
+}
+
 interface Mapped { text: string; changed: boolean }
 
 function mapTokens(value: string, role: Role, fn: ColorFn, ctx: RuleContext): Mapped {
@@ -31,6 +51,15 @@ function mapTokens(value: string, role: Role, fn: ColorFn, ctx: RuleContext): Ma
     const varIdx = lower.indexOf('var(', pos);
     TOKEN.lastIndex = pos;
     const m = TOKEN.exec(value);
+    const urlRe = /(?<![\w-])url\(|["']/gi;
+    urlRe.lastIndex = pos;
+    const op = urlRe.exec(value);
+    if (op && (!m || op.index <= m.index) && (varIdx < 0 || op.index < varIdx)) {
+      const end = opaqueEnd(value, op.index);
+      out += value.slice(pos, end);
+      pos = end;
+      continue;
+    }
     if (varIdx >= 0 && (!m || varIdx <= m.index)) {
       // Copy up to var(, keep the custom property name, map only the fallback.
       out += value.slice(pos, varIdx + 4);
@@ -57,7 +86,10 @@ function mapTokens(value: string, role: Role, fn: ColorFn, ctx: RuleContext): Ma
     }
     if (!m) break;
     out += value.slice(pos, m.index);
-    const color = parseColor(m[0]);
+    const prev = m.index > 0 ? value[m.index - 1] : '';
+    const isWord = /^[a-z]/i.test(m[0]);
+    const notColorPos = isWord && (/[\w#.-]/.test(prev) || value[m.index + m[0].length] === '(');
+    const color = notColorPos ? null : parseColor(m[0]);
     if (color) {
       out += fn(color, role, ctx);
       changed = true;
