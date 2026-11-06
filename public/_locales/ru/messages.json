@@ -100,5 +100,11 @@
   },
   "preset_contrast": {
     "message": "Высокий контраст"
+  },
+  "scopeLabel": {
+    "message": "Настройки применяются"
+  },
+  "globalToggleLabel": {
+    "message": "Поведение по умолчанию"
   }
 }

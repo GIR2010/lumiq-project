@@ -29,8 +29,18 @@ const SLIDERS: { key: keyof Adjustments; label: MessageKey; min: number; max: nu
 type SiteMode = 'default' | 'on' | 'off';
 
 export function App() {
-  const { state, tabId, scope, setScope, updateGlobal, updateSite } = usePopupState();
-  if (!state) return null;
+  const { state, failed, retryLoad, tabId, scope, setScope, updateGlobal, updateSite } = usePopupState();
+  if (!state) {
+    if (!failed) return null;
+    return (
+      <div className="popup">
+        <header><span className="status status-error">{t('statusError')}</span></header>
+        <section className="banner">
+          <button type="button" onClick={retryLoad}>{t('retry')}</button>
+        </section>
+      </div>
+    );
+  }
   const { host, state: tab, snapshot } = state;
   const { g, styles, sites } = snapshot;
   const status = tab.status;
@@ -38,7 +48,7 @@ export function App() {
   const footer = (
     <footer>
       <Segmented
-        ariaLabel={t('globalOn')}
+        ariaLabel={t('globalToggleLabel')}
         value={g.def}
         options={[{ value: 'on', label: t('globalOn') }, { value: 'off', label: t('globalOff') }]}
         onChange={(def) => updateGlobal({ def })}
@@ -91,7 +101,7 @@ export function App() {
       )}
       <section>
         <Segmented<'global' | 'site'>
-          ariaLabel={t('scopeSite')}
+          ariaLabel={t('scopeLabel')}
           value={scope}
           options={[{ value: 'global', label: t('scopeGlobal') }, { value: 'site', label: t('scopeSite') }]}
           onChange={setScope}

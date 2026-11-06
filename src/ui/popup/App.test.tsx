@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, test, expect, type Mock } from 'vitest';
+import { beforeEach, test, expect, vi, type Mock } from 'vitest';
 import { installFakeChrome } from '../../../tests/fakes/chrome';
 import { DEFAULT_GLOBAL } from '../../core/settings/defaults';
 import type { PopupState, Request } from '../../shared/messages';
@@ -41,4 +41,24 @@ test('недоступная страница: только статус и по
   expect(await screen.findByText('statusUnsupported')).toBeTruthy();
   expect(screen.queryByLabelText('sliderBrightness')).toBeNull();
   expect(screen.getByRole('radio', { name: 'globalOff' })).toBeTruthy();
+});
+test('GET_TAB_STATE падает дважды: статус ошибки и retry перезагружает состояние', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  mockState();
+  const ok = (chrome.runtime.sendMessage as Mock).getMockImplementation()!;
+  (chrome.runtime.sendMessage as Mock).mockRejectedValue(new Error('Receiving end does not exist'));
+  render(<App />);
+  expect(await screen.findByText('statusError')).toBeTruthy();
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('[DarkExt]'), expect.anything());
+  (chrome.runtime.sendMessage as Mock).mockImplementation(ok);
+  await userEvent.click(screen.getByRole('button', { name: 'retry' }));
+  expect(await screen.findByRole('radio', { name: 'siteOff' })).toBeTruthy();
+  expect(chrome.tabs.reload).not.toHaveBeenCalled();
+  warn.mockRestore();
+});
+test('группы переключателей имеют собственные имена', async () => {
+  mockState(); render(<App />);
+  await screen.findByRole('radio', { name: 'siteOff' });
+  expect(screen.getByRole('radiogroup', { name: 'scopeLabel' })).toBeTruthy();
+  expect(screen.getByRole('radiogroup', { name: 'globalToggleLabel' })).toBeTruthy();
 });

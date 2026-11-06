@@ -100,5 +100,11 @@
   },
   "preset_contrast": {
     "message": "High contrast"
+  },
+  "scopeLabel": {
+    "message": "Settings apply to"
+  },
+  "globalToggleLabel": {
+    "message": "Default behaviour"
   }
 }
