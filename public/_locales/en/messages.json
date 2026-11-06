@@ -1,0 +1,104 @@
+{
+  "extName": {
+    "message": "DarkExt"
+  },
+  "extDescription": {
+    "message": "Dark mode for any site, tuned to your colors"
+  },
+  "cmdToggleSite": {
+    "message": "Toggle dark mode on this site"
+  },
+  "cmdToggleGlobal": {
+    "message": "Toggle default: on everywhere / off everywhere"
+  },
+  "statusActive": {
+    "message": "Active"
+  },
+  "statusOff": {
+    "message": "Off"
+  },
+  "statusSystemLight": {
+    "message": "Off — system theme is light"
+  },
+  "statusAlreadyDark": {
+    "message": "Site is already dark"
+  },
+  "statusError": {
+    "message": "Error on this page"
+  },
+  "statusHeavy": {
+    "message": "Page is too heavy, some styles skipped"
+  },
+  "statusUnsupported": {
+    "message": "Not available on this page"
+  },
+  "siteToggleLabel": {
+    "message": "On this site"
+  },
+  "siteDefault": {
+    "message": "Default"
+  },
+  "siteOn": {
+    "message": "On"
+  },
+  "siteOff": {
+    "message": "Off"
+  },
+  "alreadyDarkBanner": {
+    "message": "Site is already dark — not darkening"
+  },
+  "forceDarken": {
+    "message": "Darken anyway"
+  },
+  "scopeGlobal": {
+    "message": "Global"
+  },
+  "scopeSite": {
+    "message": "This site"
+  },
+  "resetToGlobal": {
+    "message": "Reset to global"
+  },
+  "styleLabel": {
+    "message": "Style"
+  },
+  "sliderBrightness": {
+    "message": "Brightness"
+  },
+  "sliderContrast": {
+    "message": "Contrast"
+  },
+  "sliderSepia": {
+    "message": "Sepia"
+  },
+  "sliderGrayscale": {
+    "message": "Grayscale"
+  },
+  "sliderImages": {
+    "message": "Dim images"
+  },
+  "globalOn": {
+    "message": "On everywhere"
+  },
+  "globalOff": {
+    "message": "Off everywhere"
+  },
+  "retry": {
+    "message": "Restart"
+  },
+  "preset_graphite": {
+    "message": "Graphite"
+  },
+  "preset_midnight": {
+    "message": "Deep night"
+  },
+  "preset_oled": {
+    "message": "OLED"
+  },
+  "preset_warm": {
+    "message": "Warm"
+  },
+  "preset_contrast": {
+    "message": "High contrast"
+  }
+}
