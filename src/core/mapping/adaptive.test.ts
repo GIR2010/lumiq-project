@@ -62,4 +62,16 @@ describe('adaptive mapper', () => {
   test('нейтральный цвет ссылки (isLink) → link', () => {
     expect(formatColor(m.map(parseColor('#333333')!, 'text', { ...ctx, isLink: true }))).toBe(C.link);
   });
+  test('bg непрерывен в L=0.5', () => {
+    const at = (l: number) => m.map({ l, c: 0, h: 0, alpha: 1 }, 'bg', ctx).l;
+    expect(Math.abs(at(0.5) - at(0.5 + 1e-6))).toBeLessThan(1e-3);
+  });
+  test('bg не растёт при L_in >= L(surface)+0.06 (шаг 0.01 на [0.30, 0.70])', () => {
+    const at = (l: number) => m.map({ l, c: 0, h: 0, alpha: 1 }, 'bg', ctx).l;
+    const lo = L(C.surface) + 0.06;
+    for (let i = 30; i < 70; i++) {
+      const a = i / 100, b = (i + 1) / 100;
+      if (a >= lo) expect(at(b)).toBeLessThanOrEqual(at(a) + 1e-9);
+    }
+  });
 });

@@ -3,7 +3,7 @@ import type { StyleColors } from '../settings/schema';
 import type { ColorMapper, Role, RuleContext } from './types';
 
 const BG_OFFSET_MIN = 0.06;
-const BG_DARK_CAP = 0.1;
+const BG_DARK_CAP = BG_OFFSET_MIN; // meets the upper branch at L_in = 0.5 (continuity)
 const BG_MAX_CHROMA = 0.12;
 const SHADOW_L = 0.3;
 const SHADOW_ALPHA = 0.6;
