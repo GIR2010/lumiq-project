@@ -28,7 +28,7 @@ export function parseColor(input: string): Oklch | null {
   if (!parsed) return null;
   const o = toOklch(parsed);
   return {
-    l: o.l,
+    l: o.l ?? 0,
     c: o.c ?? 0,
     h: o.h === undefined || Number.isNaN(o.h) ? 0 : o.h,
     alpha: o.alpha ?? 1,
@@ -49,7 +49,10 @@ function toCuloriInput(c: Oklch | string) {
     if (!parsed) throw new Error(`Unparseable color: ${c}`);
     c = parsed;
   }
-  return { mode: 'oklch' as const, l: c.l, c: c.c, h: c.h };
+  // Same pipeline as formatColor: gamut-clamp, then quantize to 8-bit sRGB (what is painted).
+  const { r, g, b } = toRgb(clampChroma({ mode: 'oklch' as const, l: c.l, c: c.c, h: c.h }, 'oklch'));
+  const q = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 255) / 255;
+  return { mode: 'rgb' as const, r: q(r), g: q(g), b: q(b) };
 }
 
 export function contrastRatio(a: Oklch | string, b: Oklch | string): number {

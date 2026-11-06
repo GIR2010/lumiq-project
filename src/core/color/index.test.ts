@@ -14,3 +14,12 @@ test('контраст', () => {
   expect(contrastRatio('#777', '#fff')).toBeCloseTo(4.48, 1);
 });
 test('нейтральность', () => { expect(isNeutral(parseColor('#808080')!)).toBe(true); expect(isNeutral(parseColor('#3366ff')!)).toBe(false); });
+test('контраст считается по клампнутому цвету', () => {
+  const oog = { l: 0.7, c: 0.4, h: 150, alpha: 1 };
+  expect(Math.abs(contrastRatio(oog, '#000') - contrastRatio(formatColor(oog), '#000'))).toBeLessThan(0.01);
+});
+test('none-каналы → 0', () => {
+  const c = parseColor('oklch(none 0.1 20)')!;
+  expect(c.l).toBe(0);
+  expect(Number.isFinite(c.c)).toBe(true);
+});
