@@ -9,8 +9,14 @@ export function buildBaseCss(colors: StyleColors, fn: ColorFn, adj: Adjustments)
   const surface = fn(parseColor('#f0f0f0')!, 'bg', ctx);
   const border = fn(parseColor('#767676')!, 'border', ctx);
   let css =
+    // Dark UA defaults (form controls, scrollbars, canvas); switched off with the rest during detection.
+    `:root { color-scheme: dark; }\n` +
     `html, body { background-color: ${bg}; color: ${text}; }\n` +
     `input, textarea, select, button { background-color: ${surface}; color: ${text}; border-color: ${border}; }\n` +
+    `pre, code { background-color: ${surface}; }\n` +
+    `table, th, td { border-color: ${border}; }\n` +
+    `hr { border-color: ${border}; }\n` +
+    `::placeholder { color: ${colors.textMuted}; }\n` +
     `::selection { background-color: ${colors.selection}; color: ${text}; }\n` +
     `html { scrollbar-color: ${border} ${bg}; }\n` +
     `:focus-visible { outline-color: ${colors.link}; }\n`;
