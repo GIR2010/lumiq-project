@@ -19,6 +19,10 @@ function setup(over: Partial<ControllerDeps> = {}, cfgOver: Partial<EffectiveCon
   document.documentElement.insertAdjacentHTML('beforeend', '<style data-darkext="placeholder"></style>');
   return { c: createController(document, deps), deps, pipeline, fire: { domReady: () => domReady(), load: () => load(), sys: (v: boolean) => { sys.matches = v; sysChange(); } } };
 }
+const frame = () => new Promise(r => requestAnimationFrame(() => r(null)));
+const base = () => resolveConfig('a.com', DEFAULT_GLOBAL, undefined, []);
+const withBr = (br: number): EffectiveConfig => ({ ...base(), adj: { ...base().adj, br } });
+
 test('применяет и убирает заглушку', async () => {
   const { c, pipeline, deps } = setup(); await c.start();
   expect(pipeline.start).toHaveBeenCalledTimes(1);
@@ -61,7 +65,9 @@ test('статус пайплайна heavy/error при применении п
 });
 test('повторное применение вызывает update, а не start', async () => {
   const { c, pipeline } = setup(); await c.start();
-  c.onConfig({ ...resolveConfig('a.com', DEFAULT_GLOBAL, undefined, []), followSystem: false });
+  // A config that differs from the current one (identical ones are ignored), applied at the next frame.
+  c.onConfig(withBr(90));
+  await frame();
   expect(pipeline.start).toHaveBeenCalledTimes(1); expect(pipeline.update).toHaveBeenCalledTimes(1);
 });
 test('stop: после остановки события игнорируются, страница не трогается', async () => {
@@ -73,4 +79,47 @@ test('getConfig отклонён → заглушка удалена, стату
   const { c, pipeline, deps } = setup({ getConfig: async () => { throw new Error('boom'); } }); await c.start();
   expect(pipeline.start).not.toHaveBeenCalled(); expect(document.querySelector('[data-darkext=placeholder]')).toBeNull();
   expect(deps.report).toHaveBeenLastCalledWith({ status: 'error', detectedDark: false });
+});
+
+test('I2: 20 одинаковых CONFIG_CHANGED подряд → один update; повтор текущей конфигурации игнорируется', async () => {
+  const { c, pipeline } = setup(); await c.start();
+  for (let i = 0; i < 20; i++) c.onConfig(withBr(90));
+  await frame();
+  expect(pipeline.update).toHaveBeenCalledTimes(1);
+  for (let i = 0; i < 20; i++) c.onConfig(withBr(90));
+  await frame();
+  expect(pipeline.update).toHaveBeenCalledTimes(1);
+});
+
+test('I2: серия из 20 разных конфигураций в одном кадре (ползунок) → один update с последней', async () => {
+  const { c, pipeline } = setup(); await c.start();
+  for (let i = 0; i < 20; i++) c.onConfig(withBr(80 + i));
+  await frame();
+  expect(pipeline.update).toHaveBeenCalledTimes(1);
+  expect(pipeline.update).toHaveBeenCalledWith(withBr(99));
+});
+
+test('M5: после отказа GET_CONFIG пришедший CONFIG_CHANGED включает детектор и слушателей', async () => {
+  const { c, pipeline, deps, fire } = setup({ getConfig: async () => { throw new Error('boom'); } }); await c.start();
+  c.onConfig({ ...base(), followSystem: true });
+  await frame();
+  expect(pipeline.start).toHaveBeenCalledTimes(1);
+  expect(pipeline.onStatus).toHaveBeenCalledTimes(1);
+  fire.domReady();
+  expect(deps.detect).toHaveBeenCalledTimes(1);
+  fire.sys(false); // the system listener is registered too
+  expect(deps.report).toHaveBeenLastCalledWith({ status: 'system-light', detectedDark: false });
+});
+
+test('M6: CONFIG_CHANGED во время ожидания GET_CONFIG важнее более старого ответа', async () => {
+  let answer!: (cfg: EffectiveConfig) => void;
+  const { c, pipeline } = setup({ getConfig: () => new Promise<EffectiveConfig>(r => { answer = r; }) });
+  const started = c.start();
+  c.onConfig(withBr(120));
+  answer(withBr(60)); // the older value
+  await started;
+  await frame();
+  expect(pipeline.start).toHaveBeenCalledTimes(1);
+  expect(pipeline.start).toHaveBeenCalledWith(withBr(120));
+  expect(pipeline.update).not.toHaveBeenCalled();
 });
