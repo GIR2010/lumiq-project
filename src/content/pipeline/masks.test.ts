@@ -117,4 +117,44 @@ describe('MaskIndex', () => {
     for (let i = 0; i < 400; i++) if (idx.isMaskRule(`.c${i}`)) kept++;
     expect(kept).toBe(300);
   });
+
+  it('recognises pseudo-element masks only for the same pseudo', () => {
+    idx.collect(parseCssText('.icon::before{-webkit-mask-image:url(a.svg);background-color:red}'));
+    document.body.innerHTML = '<span class="icon"></span>';
+    expect(idx.refresh([document])).toBe(true);
+    expect(idx.isMaskRule('.icon::before')).toBe(true);
+    expect(idx.isMaskRule('.icon')).toBe(false);
+    expect(idx.isMaskRule('.icon::after')).toBe(false);
+  });
+
+  it('handles the legacy single-colon :after', () => {
+    idx.collect(parseCssText('.ic:after{mask-image:url(a.svg)}'));
+    document.body.innerHTML = '<span class="ic"></span>';
+    idx.refresh([document]);
+    expect(idx.isMaskRule('.ic:after')).toBe(true);
+    expect(idx.isMaskRule('.ic::after')).toBe(true);
+    expect(idx.isMaskRule('.ic')).toBe(false);
+  });
+
+  it('finds the root element itself', () => {
+    idx.collect(parseCssText('.m{mask-image:url(a.svg)}'));
+    const el = document.createElement('span');
+    el.className = 'm';
+    document.body.appendChild(el);
+    expect(idx.refresh([el])).toBe(true);
+    expect(idx.isMaskRule('.m')).toBe(true);
+  });
+
+  it('ignores a bare pseudo-element selector without throwing', () => {
+    idx.collect(parseCssText('::before{mask-image:url(a.svg)}'));
+    document.body.innerHTML = '<span></span>';
+    expect(() => idx.refresh([document])).not.toThrow();
+    expect(idx.isMaskRule('::before')).toBe(false);
+  });
+
+  it('refresh with no roots defaults to the document', () => {
+    idx.collect(parseCssText('.m{mask-image:url(a.svg)}'));
+    document.body.innerHTML = '<span class="m"></span>';
+    expect(idx.refresh([])).toBe(true);
+  });
 });
