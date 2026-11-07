@@ -1,14 +1,15 @@
 import { buildBaseCss, buildFallbackCss } from '../../core/css/base';
-import { VarRoleCounter, VarRoleTable } from '../../core/css/vars';
+import { VarRoleCounter, VarRoleTable, type VarLinks } from '../../core/css/vars';
 import { createAdaptiveMapper } from '../../core/mapping/adaptive';
 import { createColorFn } from '../../core/mapping/color-fn';
 import type { ColorFn, ColorMapper } from '../../core/mapping/types';
 import type { EffectiveConfig } from '../../core/settings/resolve';
 import { InlineStyler } from './inline';
+import { MaskIndex } from './masks';
 import { buildMirrorCss } from './mirror';
 import { isOwnNode, isStylesheetLink, observeRoot, scheduleFrame, type ObserverHandlers } from './observer';
 import { runChunked } from './scheduler';
-import { countVarUsage, extractImports, parseCssText, readRules } from './sheets';
+import { countStyleDeclaration, countVarUsage, extractImports, parseCssText, readRules } from './sheets';
 import { StyleWriter } from './writer';
 
 export interface PipelineDeps {
@@ -78,6 +79,14 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   /** Variable roles from per-source usage counts, and the variables each source defines. */
   const vars = new VarRoleTable();
   const varDefs = new Map<Source, Set<string>>();
+  /** Elements whose inline `style` is registered in `vars` (dropped once disconnected). */
+  const inlineVars = new Set<Element>();
+  /** Elements painted with CSS masks: their background colour is an icon (text) colour. Grow-only until detach. */
+  const masks = new MaskIndex(doc);
+  const isMask = (selector: string) => masks.isMaskRule(selector);
+  /** New mask selectors were collected / elements were added: the mask elements are looked up at the next frame. */
+  let masksDirty = false;
+  let nodesAdded = false;
   /** Mirrored sources whose variables changed role: rebuilt once, at the end of the frame. */
   const pendingRebuild = new Set<Source>();
   /** Sheets reported changed (CSS-in-JS): re-processed once per frame. */
@@ -224,9 +233,13 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     }
   }
 
-  function countRules(rules: CSSRuleList, counts: VarRoleCounter, defs: Set<string>, depth = 0): void {
-    forEachImport(rules, depth, (r) => countRules(r, counts, defs, depth + 1));
-    countVarUsage(rules, counts, defs);
+  function countRules(rules: CSSRuleList, counts: VarRoleCounter, defs: Set<string>, links: VarLinks, depth = 0): void {
+    forEachImport(rules, depth, (r) => countRules(r, counts, defs, links, depth + 1));
+    if (masks.collect(rules)) {
+      masksDirty = true;
+      requestFrame();
+    }
+    countVarUsage(rules, counts, defs, links, isMask);
   }
 
   function mirrorCss(rules: CSSRuleList, colorFn: ColorFn, depth = 0): string {
@@ -235,7 +248,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       const inner = mirrorCss(r, colorFn, depth + 1);
       css += media && inner ? `@media ${media}{${inner}}` : inner;
     });
-    return css + buildMirrorCss(rules, colorFn, vars);
+    return css + buildMirrorCss(rules, colorFn, vars, isMask);
   }
 
   /** Replaces the source's variable counts; returns the variables whose role changed. */
@@ -243,9 +256,10 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     const rules = rulesOf(item);
     const counts = new VarRoleCounter();
     const defs = new Set<string>();
-    if (rules) countRules(rules, counts, defs);
+    const links: VarLinks = [];
+    if (rules) countRules(rules, counts, defs, links);
     varDefs.set(item.source, defs);
-    return vars.set(item.source, counts);
+    return vars.set(item.source, counts, links);
   }
 
   /** Mirrored sources defining a variable whose role changed are rebuilt at the end of the frame. */
@@ -273,6 +287,42 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     if (!cancelFrame) cancelFrame = scheduleFrame(() => guard(flushFrame));
   }
 
+  /**
+   * Looks the mask elements up once per frame, when new mask selectors were collected or elements were
+   * added. Found elements change how mask rules count, so every counted source is recounted once and
+   * every mirror rebuilt. `refresh` is true only for new signatures (bounded per page), so this cannot loop;
+   * other rebuilds never recount.
+   */
+  function checkMasks(): void {
+    if (!masksDirty && !nodesAdded) return;
+    masksDirty = nodesAdded = false;
+    if (!masks.refresh([doc, ...roots])) return;
+    for (const [source, entry] of entries) {
+      if (source instanceof Element && !source.isConnected) continue; // forgotten by its build
+      count({ source, entry });
+    }
+    // Every definer of a changed variable is mirrored, so rebuilding all mirrors covers them.
+    for (const source of mirrored) pendingRebuild.add(source);
+  }
+
+  /** Inline variables of elements that left the document no longer count. */
+  function pruneInline(): void {
+    const changed = new Set<string>();
+    for (const el of inlineVars) {
+      if (el.isConnected) continue;
+      inlineVars.delete(el);
+      vars.delete(el).forEach((n) => changed.add(n));
+    }
+    rebuildDefiners(changed);
+  }
+
+  /** Per-frame work after the batch: inline cleanup, mask lookup, queued rebuilds. */
+  function frameWork(): void {
+    pruneInline();
+    checkMasks();
+    flushRebuilds();
+  }
+
   function flushFrame(): void {
     cancelFrame = null;
     if (!running) return;
@@ -290,7 +340,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       pendingRefresh.clear();
       sheets.forEach(refreshNow);
     }
-    flushRebuilds();
+    frameWork();
   }
 
   function unmirror(source: Source): void {
@@ -494,9 +544,29 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     return [doc, ...roots].flatMap(styledIn);
   }
 
+  /** Registers the element's inline variable usages and links (`--x: var(--y)`); collects changed names. */
+  function countInline(el: Element, changed: Set<string>): void {
+    const attr = el.getAttribute('style');
+    const st = (el as HTMLElement).style;
+    if (st && attr && (attr.includes('--') || attr.includes('var('))) {
+      const counts = new VarRoleCounter();
+      const links: VarLinks = [];
+      countStyleDeclaration(st, counts, links);
+      inlineVars.add(el);
+      vars.set(el, counts, links).forEach((n) => changed.add(n));
+    } else if (inlineVars.delete(el)) {
+      vars.delete(el).forEach((n) => changed.add(n));
+    }
+  }
+
   function applyInline(els: Element[]): void {
     if (!fn || disabled) return;
-    for (const el of els) inline.apply(el, fn);
+    const changed = new Set<string>();
+    for (const el of els) {
+      countInline(el, changed);
+      inline.apply(el, fn, vars);
+    }
+    rebuildDefiners(changed);
   }
 
   // --- scheduling ---
@@ -550,7 +620,8 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       }),
       onStyleAttr: (el) => guard(() => { if (running) applyInline([el]); }),
       onHeadChange: () => guard(() => { if (running) writer.ensureBaseFirst(); }),
-      onFlushed: () => guard(() => { if (running) flushRebuilds(); }),
+      onNodesAdded: () => { nodesAdded = true; },
+      onFlushed: () => guard(() => { if (running) frameWork(); }),
       isOwn: (r) => inline.isOwnMutation(r),
     };
   }
@@ -650,6 +721,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     pendingRefresh.clear();
     pendingRoots.clear();
     allAdopted = false;
+    masksDirty = nodesAdded = false;
     cancelFrame?.();
     cancelFrame = null;
   }
@@ -663,6 +735,8 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     mirrored.clear();
     vars.clear();
     varDefs.clear();
+    inlineVars.clear();
+    masks.clear();
     adoptedRoots.clear();
   }
 

@@ -7,6 +7,16 @@ import { resolveConfig, type EffectiveConfig } from '../../core/settings/resolve
 import { createPipeline as create, type Pipeline, type PipelineDeps } from './pipeline';
 import { parseCssText } from './sheets';
 
+// Pass-through wrapper: counts how often the pipeline (re)counts variable usage of sheets.
+const calls = vi.hoisted(() => ({ countVarUsage: 0 }));
+vi.mock('./sheets', async (importOriginal) => {
+  const m = await importOriginal<typeof import('./sheets')>();
+  return {
+    ...m,
+    countVarUsage: (...a: Parameters<typeof m.countVarUsage>) => { calls.countVarUsage++; return m.countVarUsage(...a); },
+  };
+});
+
 // Every pipeline a test creates is detached afterwards, so no observer leaks into the next test.
 const live: Pipeline[] = [];
 const createPipeline = (doc: Document, deps: PipelineDeps): Pipeline => {
@@ -488,4 +498,93 @@ test('I6: <link>, ещё грузящийся к DOMContentLoaded, удержи�
   link.dispatchEvent(new Event('load'));
   expect(mirrorOf(link)).not.toBeNull();
   expect(fallback()).toBeNull();
+});
+
+// --- stage 1.5a: variable chains, per-role twins, masks, inline variables ---
+
+test('1.5a: inline-цепочка --x-color:var(--secondary-icon) у svg → определение --secondary-icon светлое', async () => {
+  const tokens = style(':root{--secondary-icon:#65686c}');
+  style('.i{color:var(--x-color)}');
+  document.body.insertAdjacentHTML('beforeend', '<svg class="i" style="--x-color:var(--secondary-icon)"></svg>');
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  await frame();
+  expect(varIn(tokens, '--secondary-icon').l).toBeGreaterThan(0.6);
+});
+
+test('1.5a: inline-цепочка без подсказки по имени; элемент после старта и его удаление', async () => {
+  const tokens = style(':root{--palette-gray:#65686c}');
+  style('.i{color:var(--x-color)}');
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  const dark = varIn(tokens, '--palette-gray').l;
+  expect(dark).toBeLessThan(0.4); // no usages, no name hint → bg
+  const wrap = document.createElement('div');
+  wrap.innerHTML = '<svg class="i" style="--x-color:var(--palette-gray)"></svg>';
+  document.body.append(wrap);
+  await frame();
+  expect(varIn(tokens, '--palette-gray').l).toBeGreaterThan(0.6); // text through the inline chain
+  wrap.remove();
+  await frame();
+  await frame();
+  expect(varIn(tokens, '--palette-gray').l).toBeCloseTo(dark, 5); // the element is gone: its links are dropped
+});
+
+test('1.5a: смешанная --white (7× фон, 6× color) → светлый двойник --white__dx-text, color переписаны', async () => {
+  const tokens = style(':root{--white:#ffffff}');
+  const bg = Array.from({ length: 7 }, (_, i) => `.b${i}{background-color:var(--white)}`).join('');
+  const fg = Array.from({ length: 6 }, (_, i) => `.t${i}{color:var(--white)}`).join('');
+  const uses = style(bg + fg);
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  await frame();
+  expect(varIn(tokens, '--white__dx-text').l).toBeGreaterThan(0.6);
+  expect(varIn(tokens, '--white').l).toBeLessThan(0.3); // main definition keeps the predominant role (bg)
+  const text = mirrorOf(uses)!.textContent!;
+  for (let i = 0; i < 6; i++) expect(text).toContain(`.t${i}{color:var(--white__dx-text, var(--white));}`);
+});
+
+const maskPage = () => {
+  const tokens = style(':root{--c:#404244}');
+  style('.cdx-button__icon{background-color:var(--c)}');
+  const mask = style('.menu{-webkit-mask-image:url(a.svg)}');
+  document.body.insertAdjacentHTML('beforeend', '<span class="cdx-button__icon menu"></span>');
+  return { tokens, mask };
+};
+
+test('1.5a: иконка-маска .cdx-button__icon.menu → --c в роли text, фон иконки светлый после кадра', async () => {
+  const { tokens } = maskPage();
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  await frame();
+  expect(varIn(tokens, '--c').l).toBeGreaterThan(0.6);
+});
+
+test('1.5a: 20 одинаковых перестроек подряд не пересчитывают счётчики и не меняют зеркала', async () => {
+  const { tokens } = maskPage();
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  await frame();
+  await frame();
+  const before = [...document.querySelectorAll('[data-darkext=mirror]')].map(m => m.textContent);
+  calls.countVarUsage = 0;
+  for (let i = 0; i < 20; i++) {
+    document.body.insertAdjacentHTML('beforeend', '<span class="cdx-button__icon menu"></span>'); // same mask signature
+    p.update(cfg()); // rebuilds every mirrored source
+    await frame();
+  }
+  expect(calls.countVarUsage).toBe(0);
+  expect([...document.querySelectorAll('[data-darkext=mirror]')].map(m => m.textContent)).toEqual(before);
+  expect(varIn(tokens, '--c').l).toBeGreaterThan(0.6);
+});
+
+test('1.5a: detach не оставляет [data-darkext] и очищает индекс масок; повторный start работает', async () => {
+  const { tokens, mask } = maskPage();
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  const dark = varIn(tokens, '--c').l; // before the mask lookup: bg
+  expect(dark).toBeLessThan(0.4);
+  await frame();
+  expect(varIn(tokens, '--c').l).toBeGreaterThan(0.6);
+  p.detach();
+  expect(document.querySelectorAll('[data-darkext]').length).toBe(0);
+  mask.remove(); // no mask rule any more: a stale index would still treat the icon rule as a mask
+  p.start(cfg());
+  await frame();
+  expect(mirrorOf(tokens)).not.toBeNull();
+  expect(varIn(tokens, '--c').l).toBeCloseTo(dark, 5); // bg again: the index was cleared
 });

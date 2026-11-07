@@ -5,6 +5,8 @@ export interface ObserverHandlers {
   isOwn(r: MutationRecord): boolean;
   /** Document roots only: children of <html>/<head> changed (e.g. <head> appeared, a node went before base). */
   onHeadChange?(): void;
+  /** Elements (not ours) were added to the tree since the last batch; called before `onFlushed`. */
+  onNodesAdded?(): void;
   /** Called after each batch has been delivered. */
   onFlushed?(): void;
 }
@@ -43,10 +45,14 @@ export function observeRoot(root: Document | ShadowRoot, h: ObserverHandlers): (
   const removed = new Set<Element>();
   const styled = new Set<Element>();
   let headChanged = false;
+  /** Elements were added / removed: the batch is delivered even without sheet or style changes. */
+  let nodesAdded = false;
+  let nodesRemoved = false;
   let cancel: (() => void) | null = null;
 
   const added = (el: Element) => {
     if (isOwnNode(el)) return;
+    nodesAdded = true;
     if (isSheetNode(el)) sheets.add(el);
     if (el.hasAttribute('style')) styled.add(el);
     if (!el.firstElementChild) return;
@@ -59,18 +65,20 @@ export function observeRoot(root: Document | ShadowRoot, h: ObserverHandlers): (
 
   const gone = (el: Element) => {
     if (isOwnNode(el)) return;
+    nodesRemoved = true;
     if (isStyleOrLink(el)) removed.add(el);
     if (el.firstElementChild) for (const d of Array.from(el.querySelectorAll('style, link'))) removed.add(d);
   };
 
   const flush = () => {
     cancel = null;
-    const rem = [...removed], sh = [...sheets], st = [...styled], head = headChanged;
-    removed.clear(); sheets.clear(); styled.clear(); headChanged = false;
+    const rem = [...removed], sh = [...sheets], st = [...styled], head = headChanged, add = nodesAdded;
+    removed.clear(); sheets.clear(); styled.clear(); headChanged = nodesAdded = nodesRemoved = false;
     for (const el of rem) if (!el.isConnected) h.onSheetNodeRemoved(el);
     for (const el of sh) if (el.isConnected) h.onSheetNode(el);
     for (const el of st) if (el.isConnected) h.onStyleAttr(el);
     if (head) h.onHeadChange?.();
+    if (add) h.onNodesAdded?.();
     h.onFlushed?.();
   };
 
@@ -96,7 +104,7 @@ export function observeRoot(root: Document | ShadowRoot, h: ObserverHandlers): (
         for (const n of Array.from(r.removedNodes)) if (n.nodeType === Node.ELEMENT_NODE) gone(n as Element);
       }
     }
-    if (!cancel && (sheets.size || removed.size || styled.size || headChanged)) cancel = scheduleFrame(flush);
+    if (!cancel && (sheets.size || removed.size || styled.size || headChanged || nodesAdded || nodesRemoved)) cancel = scheduleFrame(flush);
   };
 
   const mo = new MutationObserver(collect);
@@ -110,6 +118,6 @@ export function observeRoot(root: Document | ShadowRoot, h: ObserverHandlers): (
     mo.disconnect();
     cancel?.();
     cancel = null;
-    sheets.clear(); removed.clear(); styled.clear(); headChanged = false;
+    sheets.clear(); removed.clear(); styled.clear(); headChanged = nodesAdded = nodesRemoved = false;
   };
 }
