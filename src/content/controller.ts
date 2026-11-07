@@ -8,14 +8,11 @@ export interface ControllerDeps {
   getConfig(): Promise<EffectiveConfig | null>; report(s: TabState): void;
   pipeline: Pipeline; matchDark(): { matches: boolean; onChange(cb: () => void): void };
   detect(): 'dark' | 'light' | 'unsure'; onDomReady(cb: () => void): void; onLoad(cb: () => void): void;
-  /** Runs `cb` at the next animation frame (CONFIG_CHANGED coalescing); default requestAnimationFrame. */
-  nextFrame?(cb: () => void): void;
 }
 
 export function createController(doc: Document, deps: ControllerDeps) {
   const { pipeline } = deps;
   const sys = deps.matchDark();
-  const nextFrame = deps.nextFrame ?? ((cb: () => void) => { scheduleFrame(cb); });
   let cfg: EffectiveConfig | null = null;
   /** A config (possibly null) has been applied at least once. */
   let hasCfg = false;
@@ -136,7 +133,7 @@ export function createController(doc: Document, deps: ControllerDeps) {
     onConfig(next: EffectiveConfig | null): void {
       if (stopped) return;
       pushed = true;
-      if (!queued) nextFrame(flushQueued);
+      if (!queued) scheduleFrame(flushQueued);
       queued = { cfg: next };
     },
     stop(): void { stopped = true; },
