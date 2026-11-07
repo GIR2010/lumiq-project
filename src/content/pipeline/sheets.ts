@@ -1,4 +1,4 @@
-import { collectVarUsage, type VarRoleCounter } from '../../core/css/vars';
+import { collectVarUsage, type VarLinks, type VarRoleCounter } from '../../core/css/vars';
 import { SHORTHAND_ROLES } from '../../core/css/declarations';
 
 export function readRules(sheet: CSSStyleSheet): CSSRuleList | 'cross-origin' | 'pending' {
@@ -68,19 +68,49 @@ export function varShorthands(st: CSSStyleDeclaration): Array<[string, string]> 
   return out;
 }
 
+const MASK_TEXT_PROPS = new Set(['background-color', 'background']);
+
+function countOne(prop: string, value: string, counter: VarRoleCounter, links: VarLinks | undefined, asMask: boolean): void {
+  if (asMask && MASK_TEXT_PROPS.has(prop)) {
+    // A mask paints with background-color, so these usages are icon (text) colours.
+    for (const m of value.matchAll(/var\(\s*(--[^\s,)]+)/gi)) counter.add(m[1], 'text');
+    return;
+  }
+  collectVarUsage(prop, value, counter, links);
+}
+
+/**
+ * Counts `var()` usages of one declaration block by role; custom properties it defines are added to
+ * `defs` and their var() references to `links`. With `asMask`, background colour usages count as text.
+ */
+export function countStyleDeclaration(
+  st: CSSStyleDeclaration,
+  counter: VarRoleCounter,
+  links?: VarLinks,
+  defs?: Set<string>,
+  asMask = false,
+): void {
+  for (let i = 0; i < st.length; i++) {
+    const prop = st.item(i);
+    if (defs && prop.startsWith('--')) defs.add(prop);
+    countOne(prop, st.getPropertyValue(prop), counter, links, asMask);
+  }
+  for (const [prop, value] of varShorthands(st)) countOne(prop, value, counter, links, asMask);
+}
+
 /** Counts `var()` usages by role; custom properties the rules define are added to `defs`. */
-export function countVarUsage(rules: CSSRuleList, counter: VarRoleCounter, defs?: Set<string>): void {
+export function countVarUsage(
+  rules: CSSRuleList,
+  counter: VarRoleCounter,
+  defs?: Set<string>,
+  links?: VarLinks,
+  isMask?: (selector: string) => boolean,
+): void {
   for (const rule of Array.from(rules)) {
     if (isStyleRule(rule)) {
-      const st = rule.style;
-      for (let i = 0; i < st.length; i++) {
-        const prop = st.item(i);
-        if (defs && prop.startsWith('--')) defs.add(prop);
-        collectVarUsage(prop, st.getPropertyValue(prop), counter);
-      }
-      for (const [prop, value] of varShorthands(st)) collectVarUsage(prop, value, counter);
+      countStyleDeclaration(rule.style, counter, links, defs, isMask?.(rule.selectorText) ?? false);
     } else if (isGroupingRule(rule)) {
-      countVarUsage(rule.cssRules, counter, defs);
+      countVarUsage(rule.cssRules, counter, defs, links, isMask);
     }
   }
 }
