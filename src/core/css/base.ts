@@ -17,3 +17,11 @@ export function buildBaseCss(colors: StyleColors, fn: ColorFn, adj: Adjustments)
   if (adj.img > 0) css += `img, video, canvas, picture { filter: brightness(${1 - adj.img / 100}); }\n`;
   return css;
 }
+
+/** Transient guard against a light flash while the page's sheets (e.g. from a CDN) are still on their way. */
+export function buildFallbackCss(fn: ColorFn): string {
+  const ctx: RuleContext = { selector: 'html', isLink: false, isVisited: false };
+  const bg = fn(parseColor('#ffffff')!, 'bg', ctx);
+  const text = fn(parseColor('#000000')!, 'text', ctx);
+  return `html,body{background-color:${bg} !important;color:${text} !important}`;
+}

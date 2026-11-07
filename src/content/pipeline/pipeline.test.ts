@@ -382,3 +382,55 @@ test('I5: повторный refreshSheet неизменного листа не
   for (let i = 0; i < 3; i++) { p.refreshSheet(usesAsText.sheet!); await frame(); }
   expect(varIn(tokens, '--x').l).toBeLessThan(0.3); // still bg: counts were replaced, not added
 });
+
+const fallback = () => document.querySelector('[data-darkext=fallback]');
+
+test('I6: запасной стиль html/body держится, пока грузится кросс-доменный лист; снимается после зеркала', async () => {
+  let release!: (css: string) => void;
+  const link = crossOriginLink('https://cdn.example/site.css');
+  const p = createPipeline(document, { fetchCss: vi.fn(() => new Promise<string>(r => { release = r; })) });
+  p.start(cfg());
+  await settle();
+  const fb = fallback()!;
+  expect(fb).not.toBeNull();
+  expect(fb.textContent).toMatch(/html,\s*body\s*\{[^}]*background-color:[^;}]+!important/);
+  expect(bgOf('body').l).toBeLessThan(0.3);
+  release('body{background-color:#fff}');
+  await settle();
+  expect(mirrorOf(link)).not.toBeNull();
+  expect(fallback()).toBeNull();
+});
+
+test('I6: запасной стиль снимается через 2000 мс, если лист так и не пришёл; setDisabled его выключает; detach убирает', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    crossOriginLink('https://cdn.example/never.css');
+    const p = createPipeline(document, { fetchCss: vi.fn(() => new Promise<string>(() => {})) });
+    p.start(cfg());
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fallback()).not.toBeNull();
+    p.setDisabled(true);
+    expect(fallback()!.getAttribute('media')).toBe('not all');
+    p.setDisabled(false);
+    expect(fallback()!.hasAttribute('media')).toBe(false);
+    await vi.advanceTimersByTimeAsync(1980);
+    expect(fallback()).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(fallback()).toBeNull();
+    p.detach(); p.start(cfg());
+    expect(fallback()).not.toBeNull();
+    p.detach();
+    expect(fallback()).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('I6: при загрузке документа ждём листы, известные к DOMContentLoaded; без них запасной стиль снимается сразу', async () => {
+  const readyState = vi.spyOn(document, 'readyState', 'get').mockReturnValue('loading');
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  expect(fallback()).not.toBeNull(); // still loading: sheets may yet arrive
+  readyState.mockReturnValue('interactive');
+  document.dispatchEvent(new Event('readystatechange'));
+  expect(fallback()).toBeNull(); // every sheet present at DOMContentLoaded is mirrored
+});

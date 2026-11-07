@@ -142,3 +142,29 @@ test('CSS-in-JS: 5 000 rules inserted over several frames end up dark', async ({
   await expect.poll(() => bgL(page.locator('#first')), { timeout: 3000 }).toBeLessThan(DARK);
   expect(await tabStatus(sw, page)).not.toBe('heavy');
 });
+
+test('CSS from a slow CDN: the body is never light between DOMContentLoaded and the mirror', async ({ context, bodyBg }) => {
+  await context.addInitScript(() => {
+    const w = window as unknown as { __flash: { light: boolean; mirrored: boolean; frames: number } };
+    w.__flash = { light: false, mirrored: false, frames: 0 };
+    const isLight = (css: string) => {
+      const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?/.exec(css);
+      return !!m && (m[4] === undefined || Number(m[4]) > 0.5) && Number(m[1]) + Number(m[2]) + Number(m[3]) > 600;
+    };
+    document.addEventListener('DOMContentLoaded', () => {
+      const tick = () => {
+        const link = document.querySelector('link[rel=stylesheet]');
+        const mirrored = link?.nextElementSibling?.getAttribute('data-darkext') === 'mirror';
+        if (isLight(getComputedStyle(document.body).backgroundColor)) w.__flash.light = true;
+        if (mirrored) w.__flash.mirrored = true;
+        if (w.__flash.mirrored && ++w.__flash.frames > 5) return;
+        requestAnimationFrame(tick);
+      };
+      tick();
+    });
+  });
+  const page = await open(context, 'cdn.html', 'domcontentloaded');
+  await page.waitForFunction(() => (window as unknown as { __flash: { frames: number } }).__flash.frames > 5, null, { timeout: 5000 });
+  expect(await page.evaluate(() => (window as unknown as { __flash: { light: boolean } }).__flash.light)).toBe(false);
+  expect(await bodyBg(page)).toBeLessThan(DARK);
+});

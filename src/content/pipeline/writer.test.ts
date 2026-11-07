@@ -55,3 +55,18 @@ test('media источника копируется в зеркало, setDisabl
   expect(m.getAttribute('media')).toBe('screen');
   w.clear();
 });
+
+test('запасной стиль: помечен fallback, выключается setDisabled, убирается removeFallback и clear', () => {
+  document.head.innerHTML = '';
+  const w = new StyleWriter(document);
+  w.setFallback('html,body{color:red !important}');
+  const fb = document.querySelector('[data-darkext=fallback]')!;
+  expect(fb.textContent).toContain('red');
+  w.setFallback('html,body{color:blue !important}');
+  expect(document.querySelectorAll('[data-darkext=fallback]').length).toBe(1);
+  expect(w.hasFallback()).toBe(true);
+  w.setDisabled(true); expect(fb.getAttribute('media')).toBe('not all');
+  w.setDisabled(false); expect(fb.hasAttribute('media')).toBe(false);
+  w.removeFallback(); expect(fb.isConnected).toBe(false); expect(w.hasFallback()).toBe(false);
+  w.setFallback('x{}'); w.clear(); expect(document.querySelectorAll('[data-darkext]').length).toBe(0);
+});

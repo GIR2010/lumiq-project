@@ -1,4 +1,4 @@
-import { buildBaseCss } from '../../core/css/base';
+import { buildBaseCss, buildFallbackCss } from '../../core/css/base';
 import { VarRoleCounter, VarRoleTable } from '../../core/css/vars';
 import { createAdaptiveMapper } from '../../core/mapping/adaptive';
 import { createColorFn } from '../../core/mapping/color-fn';
@@ -35,6 +35,8 @@ const FIRST_PASS_MS = 300;
 const FIRST_PASS_RULES = 50_000;
 const INLINE_BATCH = 500;
 const MAX_IMPORT_DEPTH = 8;
+/** The anti-flash fallback is removed after this long at the latest. */
+const FALLBACK_MS = 2000;
 const IMPORT_STATEMENT = /@import[^;{}]*;/gi;
 
 /** Plan 1: both engines go through the adaptive mapper. Plan 2 swaps in the style mapper here. */
@@ -99,6 +101,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   const failed = new Set<Source>();
   /** Document sources not finished when `load` came: the window closes once they are. */
   let loadWait: Set<Source> | null = null;
+  /** Document sources not finished at DOMContentLoaded: the fallback is removed once they are. */
+  let dclWait: Set<Source> | null = null;
+  let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
   function setStatus(s: PipelineStatus): void {
     if (s === current) return;
@@ -157,6 +162,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
 
   /** The source no longer holds back the load window (finished, failed or gone). */
   function release(source: Source): void {
+    if (dclWait?.delete(source) && !dclWait.size) dropFallback();
     if (loadWait?.delete(source) && !loadWait.size) closeWindow();
   }
 
@@ -169,9 +175,20 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     loadWait = null;
   }
 
-  /** Takes the `load` snapshot once the document is complete. */
+  function dropFallback(): void {
+    if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+    fallbackTimer = null;
+    dclWait = null;
+    writer.removeFallback();
+  }
+
+  /** Takes the DOMContentLoaded snapshot (fallback) and the `load` snapshot (load window) once reached. */
   function checkReadiness(): void {
     if (!running) return;
+    if (doc.readyState !== 'loading' && writer.hasFallback() && !dclWait) {
+      dclWait = unfinished();
+      if (!dclWait.size) dropFallback();
+    }
     if (doc.readyState === 'complete' && windowOpen && !loadWait) {
       loadWait = unfinished();
       if (!loadWait.size) closeWindow();
@@ -535,6 +552,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       loadWait = null;
       fn = makeColorFn(cfg);
       writer.setBase(buildBaseCss(cfg.colors, fn, cfg.adj));
+      // Replaces the placeholder: html/body stay dark until the sheets known at DOMContentLoaded are mirrored.
+      writer.setFallback(buildFallbackCss(fn));
+      fallbackTimer = setTimeout(() => guard(dropFallback), FALLBACK_MS);
       let items: Item[] = [];
       charge(() => {
         items = resolveAll(doc);
@@ -564,6 +584,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       pendingRebuild.clear();
       const items = [...entries].map(([source, entry]) => ({ source, entry }));
       writer.setBase(buildBaseCss(cfg.colors, fn, cfg.adj));
+      if (writer.hasFallback()) writer.setFallback(buildFallbackCss(fn));
       inline.restoreAll(); // apply() skips elements it already styled; start again from the originals
       schedule(items, allStyled(), t0);
     });
@@ -575,6 +596,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     runId++;
     fn = null;
     closeWindow();
+    dropFallback();
     doc.removeEventListener('readystatechange', onReadyState);
     const safe = (f: () => void) => { try { f(); } catch (e) { console.error('[DarkExt]', e); } };
     for (const stop of observers.values()) safe(stop);

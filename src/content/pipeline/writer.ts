@@ -1,8 +1,9 @@
-type Kind = 'base' | 'mirror';
+type Kind = 'base' | 'mirror' | 'fallback';
 type Source = Element | CSSStyleSheet;
 
 export class StyleWriter {
   private base: HTMLStyleElement | null = null;
+  private fallback: HTMLStyleElement | null = null;
   private mirrors = new Map<Source, HTMLStyleElement | CSSStyleSheet>();
   private adopted = new Map<CSSStyleSheet, Document | ShadowRoot>();
   private disabled = false;
@@ -38,6 +39,23 @@ export class StyleWriter {
     else this.base.textContent = css;
     this.applyMedia(this.base);
     this.ensureBaseFirst();
+  }
+
+  /** Content-controlled anti-flash style (replaces the placeholder until the page's sheets are mirrored). */
+  setFallback(css: string): void {
+    if (!this.fallback) this.fallback = this.make('fallback', css);
+    else this.fallback.textContent = css;
+    this.applyMedia(this.fallback);
+    if (!this.fallback.isConnected) (this.doc.head ?? this.doc.documentElement)?.appendChild(this.fallback);
+  }
+
+  hasFallback(): boolean {
+    return this.fallback !== null;
+  }
+
+  removeFallback(): void {
+    this.fallback?.remove();
+    this.fallback = null;
   }
 
   setMirror(source: Source, css: string, root: Document | ShadowRoot = this.doc): void {
@@ -94,7 +112,7 @@ export class StyleWriter {
 
   setDisabled(disabled: boolean): void {
     this.disabled = disabled;
-    for (const m of [this.base, ...this.mirrors.values()]) {
+    for (const m of [this.base, this.fallback, ...this.mirrors.values()]) {
       if (!m) continue;
       if (m instanceof CSSStyleSheet) m.disabled = disabled;
       else this.applyMedia(m);
@@ -104,6 +122,7 @@ export class StyleWriter {
   clear(): void {
     this.base?.remove();
     this.base = null;
+    this.removeFallback();
     for (const m of this.mirrors.values()) this.dispose(m);
     this.mirrors.clear();
   }
