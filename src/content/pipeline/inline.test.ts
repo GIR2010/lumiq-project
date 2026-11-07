@@ -61,7 +61,11 @@ for (const reapply of [false, true]) {
   });
 }
 
-const vars = { roleOf: (): Role => 'text', isMixed: (n: string) => n === '--icon' };
+const vars = {
+  roleOf: (): Role => 'text',
+  rolesOf: (n: string): Role[] => (n === '--icon' ? ['bg', 'text'] : ['text']),
+  isMixed: (n: string) => n === '--icon',
+};
 
 test('inline-сокращение background с var() перекрашивается и восстанавливается', () => {
   document.body.innerHTML = '<div id="d" style="background: var(--x,#fff)"></div>';
@@ -121,6 +125,7 @@ test('vars с методами, зависящими от this, передают
   class Table {
     private readonly m = new Set(['--icon']);
     roleOf(): Role { return 'text'; }
+    rolesOf(n: string): Role[] { return this.m.has(n) ? ['bg', 'text'] : ['text']; }
     isMixed(n: string): boolean { return this.m.has(n); }
   }
   document.body.innerHTML = '<div id="d" style="--x-color:var(--icon); color:var(--icon)"></div>';
@@ -184,4 +189,79 @@ test('повторный apply идемпотентен: двойник не в�
   const v = d.style.getPropertyValue('color');
   expect(v).toBe('var(--icon__dx-text, var(--icon))');
   expect(v).not.toContain('var(--icon__dx-text, var(--icon__dx-text');
+});
+
+// R18: an inline definition of a mixed variable overrides its twins too, else var(--x__dx-R, var(--x)) picks the :root twin.
+const mixed = {
+  roleOf: (): Role => 'bg',
+  rolesOf: (n: string): Role[] => (n === '--accent' || n === '--icon' ? ['bg', 'text'] : ['bg']),
+  isMixed: (n: string) => n === '--accent' || n === '--icon',
+};
+test('R18: литеральное inline-переопределение смешанной переменной получает двойники', () => {
+  document.body.innerHTML = '<span id="d" style="--accent:#e91e63"></span>';
+  const s = new InlineStyler(); const d = document.getElementById('d')!;
+  s.apply(d, fn, mixed);
+  expect(d.style.getPropertyValue('--accent')).toBe('#e91e63'); // main value of a literal stays
+  expect(d.style.getPropertyValue('--accent__dx-bg')).toBe('#111111');
+  expect(d.style.getPropertyValue('--accent__dx-text')).toBe('#eeeeee');
+  s.restoreAll();
+  expect(d.getAttribute('style')).toBe('--accent:#e91e63');
+});
+test('R18: значение с var() — двойники переписаны по своей роли', () => {
+  document.body.innerHTML = '<span id="d" style="--accent:var(--icon)"></span>';
+  const s = new InlineStyler(); const d = document.getElementById('d')!;
+  s.apply(d, fn, mixed);
+  expect(d.style.getPropertyValue('--accent__dx-bg')).toBe('var(--icon__dx-bg, var(--icon))');
+  expect(d.style.getPropertyValue('--accent__dx-text')).toBe('var(--icon__dx-text, var(--icon))');
+  s.restoreAll();
+  expect(d.getAttribute('style')).toBe('--accent:var(--icon)');
+});
+test('R18: несмешанное inline custom property не трогается', () => {
+  document.body.innerHTML = '<span id="d" style="--plain:#e91e63"></span>';
+  const s = new InlineStyler(); const d = document.getElementById('d')!;
+  const mo = new MutationObserver(() => {}); mo.observe(d, { attributes: true });
+  s.apply(d, fn, mixed);
+  expect(mo.takeRecords()).toHaveLength(0);
+  expect(d.getAttribute('style')).toBe('--plain:#e91e63');
+  mo.disconnect();
+});
+test('R18: повторный apply идемпотентен, записи распознаются как свои', () => {
+  document.body.innerHTML = '<span id="d" style="--accent:#e91e63"></span>';
+  const s = new InlineStyler(); const d = document.getElementById('d')!;
+  const mo = new MutationObserver(() => {}); mo.observe(d, { attributes: true });
+  s.apply(d, fn, mixed);
+  const once = d.getAttribute('style');
+  s.apply(d, fn, mixed);
+  expect(d.getAttribute('style')).toBe(once);
+  const recs = mo.takeRecords();
+  expect(recs.length).toBeGreaterThan(0);
+  expect(recs.every((r) => s.isOwnMutation(r))).toBe(true);
+  mo.disconnect();
+});
+test('R18: страница меняет основное свойство — двойники обновляются, restoreAll убирает их', () => {
+  const echo: ColorFn = (c, role) => `${role}-${Math.round(c.l)}`;
+  document.body.innerHTML = '<span id="d" style="--accent:#ffffff"></span>';
+  const s = new InlineStyler(); const d = document.getElementById('d')!;
+  s.apply(d, echo, mixed);
+  expect(d.style.getPropertyValue('--accent__dx-text')).toBe('text-1');
+  d.style.setProperty('--accent', '#000000'); // page JS
+  s.apply(d, echo, mixed);
+  expect(d.style.getPropertyValue('--accent__dx-text')).toBe('text-0');
+  expect(d.style.getPropertyValue('--accent__dx-bg')).toBe('bg-0');
+  s.restoreAll();
+  expect(d.style.getPropertyValue('--accent')).toBe('#000000');
+  expect(d.style.getPropertyValue('--accent__dx-bg')).toBe('');
+  expect(d.style.getPropertyValue('--accent__dx-text')).toBe('');
+});
+test('R18: страница удаляет основное свойство — двойники удаляются при следующем apply', () => {
+  document.body.innerHTML = '<span id="d" style="--accent:#e91e63; color:#000"></span>';
+  const s = new InlineStyler(); const d = document.getElementById('d')!;
+  s.apply(d, fn, mixed);
+  d.style.removeProperty('--accent');
+  s.apply(d, fn, mixed);
+  expect(d.style.getPropertyValue('--accent__dx-bg')).toBe('');
+  expect(d.style.getPropertyValue('--accent__dx-text')).toBe('');
+  s.restoreAll();
+  expect(d.style.color).toBe('rgb(0, 0, 0)');
+  expect(d.style.getPropertyValue('--accent__dx-bg')).toBe('');
 });
