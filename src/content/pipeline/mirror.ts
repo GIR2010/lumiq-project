@@ -71,7 +71,7 @@ function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoles, isMask?: 
       const copy = icons(d.abs);
       if (!copy) continue;
       // A shorthand is never re-emitted (it would reset colours the mirror sets): only its image longhand.
-      const value = replaceImageUrl(d.shorthand ? `url("${d.raw.replace(/[\\"]/g, '\$&')}")` : d.value, d.raw, copy);
+      const value = replaceImageUrl(d.shorthand ? `url("${d.raw.replace(/[\\"]/g, '\\$&')}")` : d.value, d.raw, copy);
       body += `${d.outProp}:${value}${d.important ? ' !important' : ''};`;
     }
   }
