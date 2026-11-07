@@ -872,3 +872,19 @@ test('1.5b: setDisabled отключает базовый лист с фильт
   p.setDisabled(true);
   expect(base.getAttribute('media')).toBe('not all');
 });
+
+test('1.5b: теневой корень получает правило значков; setDisabled выключает; detach убирает; без images — нет', () => {
+  const host = document.createElement('div'); document.body.append(host);
+  const root = host.attachShadow({ mode: 'open' });
+  root.innerHTML = '<p>x</p>';
+  const p = createPipeline(document, imagesDeps(fakeAnalyzer())); p.start(cfg()); p.addRoot(root);
+  const el = root.querySelector('style[data-darkext=icons]')!;
+  expect(el.textContent).toContain('img[data-darkext-icon]{filter:invert(1) hue-rotate(180deg)');
+  p.update({ ...cfg(), adj: { ...cfg().adj, img: 20 } });
+  expect(el.textContent).toContain('brightness(0.8)');
+  p.setDisabled(true); expect(el.getAttribute('media')).toBe('not all');
+  p.setDisabled(false);
+  p.detach(); expect(root.querySelector('[data-darkext]')).toBeNull();
+  const q = createPipeline(document, { fetchCss: vi.fn() }); q.start(cfg()); q.addRoot(root);
+  expect(root.querySelector('[data-darkext]')).toBeNull();
+});

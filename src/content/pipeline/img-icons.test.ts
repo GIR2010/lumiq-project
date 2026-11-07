@@ -207,3 +207,28 @@ test('ошибка анализатора — картинка как есть, 
   expect(debug).toHaveBeenCalledWith('[DarkExt] icon analysis failed', 'https://x.test/1.png');
   debug.mockRestore();
 });
+
+test('0×0 на экране: решают естественные размеры (≤ 400 — анализ, больше — нет)', () => {
+  const a = fakeAnalyzer();
+  const icons = new ImgIcons(a as never);
+  const small = makeImg({ w: 0, h: 0, src: 'https://x.test/menu-icon.png' }).img;
+  Object.defineProperty(small, 'naturalWidth', { value: 16 }); Object.defineProperty(small, 'naturalHeight', { value: 16 });
+  const big = makeImg({ w: 0, h: 0, src: 'https://x.test/hidden-photo.png' }).img;
+  Object.defineProperty(big, 'naturalWidth', { value: 1200 }); Object.defineProperty(big, 'naturalHeight', { value: 16 });
+  icons.consider(small); icons.consider(big);
+  expect(a.request.mock.calls.map((c) => c[0])).toEqual(['https://x.test/menu-icon.png']);
+});
+
+test('исключение при применении вердикта не становится необработанным отказом', async () => {
+  const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  const unhandled = vi.fn();
+  process.on('unhandledRejection', unhandled);
+  const { img } = makeImg({ src: 'https://x.test/1.png' });
+  img.setAttribute = () => { throw new Error('boom'); };
+  new ImgIcons({ request: async () => dark } as never).consider(img);
+  await new Promise((r) => setTimeout(r, 10));
+  process.off('unhandledRejection', unhandled);
+  expect(unhandled).not.toHaveBeenCalled();
+  expect(debug).toHaveBeenCalledWith('[DarkExt] icon analysis failed', 'https://x.test/1.png');
+  debug.mockRestore();
+});

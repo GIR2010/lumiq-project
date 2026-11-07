@@ -2,7 +2,7 @@ import { expect, test } from 'vitest';
 import type { ColorFn } from '../mapping/types';
 import { DEFAULT_ADJUSTMENTS } from '../settings/defaults';
 import { PRESETS } from '../settings/presets';
-import { buildBaseCss, buildFallbackCss } from './base';
+import { buildBaseCss, buildFallbackCss, buildIconImgCss } from './base';
 
 const fn: ColorFn = (_c, role) => (role === 'bg' ? '#111111' : '#eeeeee');
 test('базовые правила содержат html/body и ::selection; img-фильтр только при img>0', () => {
@@ -35,4 +35,12 @@ test('базовые правила не задают scrollbar-color/scrollbar-
 test('1.5b: базовые правила инвертируют значки-<img> с data-darkext-icon', () => {
   const css = buildBaseCss(PRESETS[0].colors, fn, DEFAULT_ADJUSTMENTS);
   expect(css).toMatch(/img\[data-darkext-icon\]\s*\{\s*filter:\s*invert\(1\) hue-rotate\(180deg\) !important;?\s*\}/);
+});
+
+test('1.5b: при img>0 фильтр значков сохраняет затемнение; buildIconImgCss — то же правило', () => {
+  const adj = { ...DEFAULT_ADJUSTMENTS, img: 20 };
+  const rule = 'img[data-darkext-icon]{filter:invert(1) hue-rotate(180deg) brightness(0.8) !important}';
+  expect(buildBaseCss(PRESETS[0].colors, fn, adj)).toContain(rule);
+  expect(buildIconImgCss(adj)).toBe(rule);
+  expect(buildIconImgCss(DEFAULT_ADJUSTMENTS)).toBe('img[data-darkext-icon]{filter:invert(1) hue-rotate(180deg) !important}');
 });

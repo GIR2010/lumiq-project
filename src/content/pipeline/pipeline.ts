@@ -1,4 +1,4 @@
-import { buildBaseCss, buildFallbackCss } from '../../core/css/base';
+import { buildBaseCss, buildFallbackCss, buildIconImgCss } from '../../core/css/base';
 import { absolutizeUrls } from '../../core/css/image-urls';
 import { VarRoleCounter, VarRoleTable, type VarLinks } from '../../core/css/vars';
 import { createAdaptiveMapper } from '../../core/mapping/adaptive';
@@ -112,6 +112,8 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   const imageUrls = new Map<Source, Set<string>>();
   /** Dark icon <img> marks; shares the session's analyzer. */
   let imgIcons: ImgIcons | null = null;
+  /** The icon <img> rule written into each shadow root (the base sheet reaches the document only). */
+  let iconImgCss = '';
   const iconLookup: IconLookup = (url) => icons?.get(url)?.inverted;
   const now = deps.now ?? (() => performance.now());
 
@@ -613,6 +615,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     for (const r of [...roots]) {
       if (r.host.isConnected) continue;
       roots.delete(r);
+      writer.removeRootCss(r);
       observers.get(r)?.();
       observers.delete(r);
       for (const sheet of [...adoptedRoots.keys()]) unhold(sheet, r);
@@ -706,7 +709,11 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       onStyleAttr: (el) => guard(() => { if (running) applyInline([el]); }),
       onHeadChange: () => guard(() => { if (running) writer.ensureBaseFirst(); }),
       onNodesAdded: (els) => { if (running) noteAdded(els); },
-      onImage: (img) => guard(() => { if (running) imgIcons?.consider(img); }),
+      onImage: (img) => guard(() => {
+        if (!running || !imgIcons) return;
+        if (root !== doc) writeIconCss(root as ShadowRoot); // the page may have replaced the root's content
+        imgIcons.consider(img);
+      }),
       onFlushed: () => guard(() => { if (running) frameWork(); }),
       isOwn: (r) => inline.isOwnMutation(r),
     };
@@ -725,7 +732,10 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     for (const item of items) charge(() => build(item));
     rebuildDefiners(changed, new Set(items.map((i) => i.source)));
     applyInline(styledIn(root));
-    imgIcons?.scan(root);
+    if (imgIcons) {
+      writeIconCss(root);
+      imgIcons.scan(root);
+    }
     // Its content was never an added node: look it up for the mask selectors already known.
     const content = Array.from(root.children).filter((el) => !isOwnNode(el));
     if (content.length && !masks.full) {
@@ -733,6 +743,10 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       requestFrame();
     }
     observe(root);
+  }
+
+  function writeIconCss(root: ShadowRoot): void {
+    writer.setRootCss(root, iconImgCss);
   }
 
   function makeColorFn(cfg: EffectiveConfig): ColorFn {
@@ -755,6 +769,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       failed.clear();
       loadWait = null;
       fn = makeColorFn(cfg);
+      iconImgCss = buildIconImgCss(cfg.adj);
       startIcons();
       writer.setBase(buildBaseCss(cfg.colors, fn, cfg.adj));
       // Replaces the placeholder: html/body stay dark until the sheets known at DOMContentLoaded are mirrored.
@@ -797,6 +812,8 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       pendingRebuild.clear();
       const items = [...entries].map(([source, entry]) => ({ source, entry }));
       writer.setBase(buildBaseCss(cfg.colors, fn, cfg.adj));
+      iconImgCss = buildIconImgCss(cfg.adj);
+      if (imgIcons) for (const r of roots) writeIconCss(r);
       if (writer.hasFallback()) writer.setFallback(buildFallbackCss(fn));
       inline.restoreAll(); // apply() skips elements it already styled; start again from the originals
       schedule(items, allStyled(), t0);

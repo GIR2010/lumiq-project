@@ -1,4 +1,4 @@
-type Kind = 'base' | 'mirror' | 'fallback';
+type Kind = 'base' | 'mirror' | 'fallback' | 'icons';
 type Source = Element | CSSStyleSheet;
 type Root = Document | ShadowRoot;
 /** Mirror of an adopted (ownerless) sheet: one constructed sheet, adopted into every root holding the source. */
@@ -14,6 +14,8 @@ export class StyleWriter {
   private disabled = false;
   /** The `media` each mirror element should have when enabled (copied from its source). */
   private media = new Map<HTMLStyleElement, string | null>();
+  /** Per-shadow-root rules the document's base sheet cannot reach (dark icon <img>). */
+  private rootCss = new Map<ShadowRoot, HTMLStyleElement>();
 
   constructor(private doc: Document) {}
 
@@ -123,9 +125,27 @@ export class StyleWriter {
     for (const r of m.roots) unadopt(r, m.sheet);
   }
 
+  /** Writes (or re-inserts, if the page removed it) the root's own rule as its first child; off with the base. */
+  setRootCss(root: ShadowRoot, css: string): void {
+    let el = this.rootCss.get(root);
+    if (!el) {
+      el = this.make('icons', css);
+      this.rootCss.set(root, el);
+    } else if (el.textContent !== css) {
+      el.textContent = css;
+    }
+    this.applyMedia(el);
+    if (el.parentNode !== root) root.insertBefore(el, root.firstChild);
+  }
+
+  removeRootCss(root: ShadowRoot): void {
+    this.rootCss.get(root)?.remove();
+    this.rootCss.delete(root);
+  }
+
   setDisabled(disabled: boolean): void {
     this.disabled = disabled;
-    for (const el of [this.base, this.fallback, ...this.mirrors.values()]) if (el) this.applyMedia(el);
+    for (const el of [this.base, this.fallback, ...this.mirrors.values(), ...this.rootCss.values()]) if (el) this.applyMedia(el);
     for (const m of this.adopted.values()) m.sheet.disabled = disabled;
   }
 
@@ -133,6 +153,7 @@ export class StyleWriter {
     this.base?.remove();
     this.base = null;
     this.removeFallback();
+    for (const root of [...this.rootCss.keys()]) this.removeRootCss(root);
     for (const source of [...this.mirrors.keys(), ...this.adopted.keys()]) this.removeMirror(source);
   }
 }

@@ -21,8 +21,14 @@ export function buildBaseCss(colors: StyleColors, fn: ColorFn, adj: Adjustments)
     `:focus-visible { outline-color: ${colors.link}; }\n`;
   if (adj.img > 0) css += `img, video, canvas, picture { filter: brightness(${1 - adj.img / 100}); }\n`;
   // Dark icon <img> (marked by ImgIcons); in the base sheet so setDisabled switches it off with the rest.
-  css += `img[data-darkext-icon]{filter:invert(1) hue-rotate(180deg) !important}\n`;
+  css += `${buildIconImgCss(adj)}\n`;
   return css;
+}
+
+/** Inverts dark icon <img> marked by ImgIcons, keeping the image dimming; also written into each shadow root. */
+export function buildIconImgCss(adj: Adjustments): string {
+  const dim = adj.img > 0 ? ` brightness(${1 - adj.img / 100})` : '';
+  return `img[data-darkext-icon]{filter:invert(1) hue-rotate(180deg)${dim} !important}`;
 }
 
 /** Transient guard against a light flash while the page's sheets (e.g. from a CDN) are still on their way. */

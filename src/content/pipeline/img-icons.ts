@@ -41,8 +41,10 @@ export class ImgIcons {
       return;
     }
     if (!url || !ANALYZABLE.test(url)) return;
-    const { width, height } = img.getBoundingClientRect();
-    if (width === 0 && height === 0) return; // not rendered: reconsidered when its source changes
+    let { width, height } = img.getBoundingClientRect();
+    // Not rendered (e.g. in a closed menu): its natural size decides, so it is ready once shown.
+    if (width === 0 && height === 0) ({ naturalWidth: width, naturalHeight: height } = img);
+    if (width === 0 && height === 0) return; // no size at all (broken image)
     if (width > MAX_SIDE || height > MAX_SIDE) {
       this.unmark(img);
       return;
@@ -65,7 +67,7 @@ export class ImgIcons {
       } else {
         this.unmark(img);
       }
-    }, failed);
+    }).catch(failed);
   }
 
   /** Considers every <img> of the root. */

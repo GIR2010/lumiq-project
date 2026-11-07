@@ -91,3 +91,20 @@ test('adopted: одно зеркало общего листа в несколь
   expect(r1.adoptedStyleSheets).toEqual([A]); expect(r2.adoptedStyleSheets).toEqual([A]);
   hosts.forEach((h) => h.remove());
 });
+
+test('1.5b: правило значков в теневом корне — первым, setDisabled выключает, clear/removeRootCss убирает', () => {
+  const host = document.createElement('div'); document.body.append(host);
+  const root = host.attachShadow({ mode: 'open' });
+  root.innerHTML = '<p></p>';
+  const w = new StyleWriter(document);
+  w.setRootCss(root, 'img[data-darkext-icon]{filter:invert(1)}');
+  const el = root.firstElementChild!;
+  expect(el.getAttribute('data-darkext')).toBe('icons');
+  expect(el.textContent).toContain('img[data-darkext-icon]');
+  w.setRootCss(root, 'x{}'); expect(root.querySelectorAll('[data-darkext]').length).toBe(1);
+  el.remove(); w.setRootCss(root, 'x{}'); expect(root.firstElementChild).toBe(el); // re-inserted
+  w.setDisabled(true); expect(el.getAttribute('media')).toBe('not all');
+  w.setDisabled(false); expect(el.hasAttribute('media')).toBe(false);
+  w.clear(); expect(root.querySelector('[data-darkext]')).toBeNull();
+  w.setRootCss(root, 'x{}'); w.removeRootCss(root); expect(root.querySelector('[data-darkext]')).toBeNull();
+});
