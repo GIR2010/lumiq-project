@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MaskIndex } from './masks';
 import { parseCssText } from './sheets';
 
@@ -116,6 +116,23 @@ describe('MaskIndex', () => {
     let kept = 0;
     for (let i = 0; i < 400; i++) if (idx.isMaskRule(`.c${i}`)) kept++;
     expect(kept).toBe(300);
+  });
+
+  it('is full at 300 signatures and then refresh queries nothing', () => {
+    idx.collect(parseCssText('.x{mask-image:url(a.svg)}'));
+    let html = '';
+    for (let i = 0; i < 300; i++) html += `<i class="x c${i}"></i>`;
+    document.body.innerHTML = html;
+    expect(idx.full).toBe(false);
+    idx.refresh([document]);
+    expect(idx.full).toBe(true);
+    const spy = vi.spyOn(document, 'querySelectorAll');
+    document.body.insertAdjacentHTML('beforeend', '<i class="x extra"></i>');
+    expect(idx.refresh([document])).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+    idx.clear();
+    expect(idx.full).toBe(false);
   });
 
   it('recognises pseudo-element masks only for the same pseudo', () => {

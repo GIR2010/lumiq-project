@@ -118,8 +118,13 @@ export class MaskIndex {
     }
   }
 
+  /** The signature cap is reached: no element can be added any more, so lookups are pointless. */
+  get full(): boolean {
+    return this.reps.size >= MAX_SIGNATURES;
+  }
+
   refresh(roots: ParentNode[]): boolean {
-    if (this.count === 0) return false;
+    if (this.count === 0 || this.full) return false;
     const targets: ParentNode[] = roots.length ? roots : [this.doc];
     let added = false;
     for (const [pseudo, set] of this.selectors) {

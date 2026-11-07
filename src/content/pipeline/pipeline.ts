@@ -43,6 +43,8 @@ const MAX_IMPORT_DEPTH = 8;
 /** The anti-flash fallback is removed after this long at the latest. */
 const FALLBACK_MS = 2000;
 const IMPORT_STATEMENT = /@import[^;{}]*;/gi;
+/** More elements added within a frame than this: the mask lookup scans the whole document instead. */
+const MAX_ADDED_LOOKUP = 64;
 
 /** Plan 1: both engines go through the adaptive mapper. Plan 2 swaps in the style mapper here. */
 function createMapper(cfg: EffectiveConfig): ColorMapper {
@@ -84,9 +86,11 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   /** Elements painted with CSS masks: their background colour is an icon (text) colour. Grow-only until detach. */
   const masks = new MaskIndex(doc);
   const isMask = (selector: string) => masks.isMaskRule(selector);
-  /** New mask selectors were collected / elements were added: the mask elements are looked up at the next frame. */
+  /** New mask selectors were collected: the mask elements are looked up in every root at the next frame. */
   let masksDirty = false;
-  let nodesAdded = false;
+  /** Elements added since the last lookup (subtree roots): only they are searched, unless there are too many. */
+  const addedNodes = new Set<Element>();
+  let addedOverflow = false;
   /** Mirrored sources whose variables changed role: rebuilt once, at the end of the frame. */
   const pendingRebuild = new Set<Source>();
   /** Sheets reported changed (CSS-in-JS): re-processed once per frame. */
@@ -233,12 +237,15 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     }
   }
 
+  /** Adds the mask selectors of the rules (imports included); true when the selector set grew. */
+  function collectMasks(rules: CSSRuleList, depth = 0): boolean {
+    let grew = false;
+    forEachImport(rules, depth, (r) => { if (collectMasks(r, depth + 1)) grew = true; });
+    return masks.collect(rules) || grew;
+  }
+
   function countRules(rules: CSSRuleList, counts: VarRoleCounter, defs: Set<string>, links: VarLinks, depth = 0): void {
     forEachImport(rules, depth, (r) => countRules(r, counts, defs, links, depth + 1));
-    if (masks.collect(rules)) {
-      masksDirty = true;
-      requestFrame();
-    }
     countVarUsage(rules, counts, defs, links, isMask);
   }
 
@@ -251,9 +258,16 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     return css + buildMirrorCss(rules, colorFn, vars, isMask);
   }
 
-  /** Replaces the source's variable counts; returns the variables whose role changed. */
-  function count(item: Item): Set<string> {
+  /**
+   * Replaces the source's variable counts; returns the variables whose role changed. New mask selectors
+   * (`collect`, unless the caller already collected them) are looked up at the next frame.
+   */
+  function count(item: Item, collect = true): Set<string> {
     const rules = rulesOf(item);
+    if (rules && collect && collectMasks(rules)) {
+      masksDirty = true;
+      requestFrame();
+    }
     const counts = new VarRoleCounter();
     const defs = new Set<string>();
     const links: VarLinks = [];
@@ -287,19 +301,32 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     if (!cancelFrame) cancelFrame = scheduleFrame(() => guard(flushFrame));
   }
 
+  function noteAdded(els: Element[]): void {
+    if (addedOverflow || masks.full) return;
+    for (const el of els) addedNodes.add(el);
+    if (addedNodes.size > MAX_ADDED_LOOKUP) {
+      addedOverflow = true;
+      addedNodes.clear();
+    }
+  }
+
   /**
-   * Looks the mask elements up once per frame, when new mask selectors were collected or elements were
-   * added. Found elements change how mask rules count, so every counted source is recounted once and
-   * every mirror rebuilt. `refresh` is true only for new signatures (bounded per page), so this cannot loop;
-   * other rebuilds never recount.
+   * Looks the mask elements up once per frame: in every root when new mask selectors were collected (or
+   * too many elements were added), else only in the added subtrees; never once the index is full. Found
+   * elements change how mask rules count, so every counted source is recounted once and every mirror
+   * rebuilt. `refresh` is true only for new signatures (bounded per page), so this cannot loop; other
+   * rebuilds never recount.
    */
   function checkMasks(): void {
-    if (!masksDirty && !nodesAdded) return;
-    masksDirty = nodesAdded = false;
-    if (!masks.refresh([doc, ...roots])) return;
+    const everywhere = masksDirty || addedOverflow;
+    const added = everywhere ? [] : [...addedNodes].filter((el) => el.isConnected);
+    masksDirty = addedOverflow = false;
+    addedNodes.clear();
+    if (masks.full || (!everywhere && !added.length)) return; // an empty list would mean the whole document
+    if (!masks.refresh(everywhere ? [doc, ...roots] : added)) return;
     for (const [source, entry] of entries) {
       if (source instanceof Element && !source.isConnected) continue; // forgotten by its build
-      count({ source, entry });
+      count({ source, entry }, false); // its masks were collected when it was last counted
     }
     // Every definer of a changed variable is mirrored, so rebuilding all mirrors covers them.
     for (const source of mirrored) pendingRebuild.add(source);
@@ -620,7 +647,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       }),
       onStyleAttr: (el) => guard(() => { if (running) applyInline([el]); }),
       onHeadChange: () => guard(() => { if (running) writer.ensureBaseFirst(); }),
-      onNodesAdded: () => { nodesAdded = true; },
+      onNodesAdded: (els) => { if (running) noteAdded(els); },
       onFlushed: () => guard(() => { if (running) frameWork(); }),
       isOwn: (r) => inline.isOwnMutation(r),
     };
@@ -669,7 +696,14 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       let items: Item[] = [];
       charge(() => {
         items = resolveAll(doc);
-        items.forEach(count);
+        // Masks first: the elements they paint are looked up now, so the first count and build are mask-aware.
+        for (const item of items) {
+          const rules = rulesOf(item);
+          if (rules) collectMasks(rules);
+        }
+        if (!masks.full) masks.refresh([doc, ...roots]);
+        masksDirty = false;
+        for (const item of items) count(item, false);
       }, t0);
       schedule(items, styledIn(doc), t0);
       observe(doc);
@@ -721,7 +755,8 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     pendingRefresh.clear();
     pendingRoots.clear();
     allAdopted = false;
-    masksDirty = nodesAdded = false;
+    masksDirty = addedOverflow = false;
+    addedNodes.clear();
     cancelFrame?.();
     cancelFrame = null;
   }

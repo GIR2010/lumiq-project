@@ -5,6 +5,7 @@ import { DEFAULT_GLOBAL } from '../../core/settings/defaults';
 import { PRESETS } from '../../core/settings/presets';
 import { resolveConfig, type EffectiveConfig } from '../../core/settings/resolve';
 import { createPipeline as create, type Pipeline, type PipelineDeps } from './pipeline';
+import { MaskIndex } from './masks';
 import { parseCssText } from './sheets';
 
 // Pass-through wrapper: counts how often the pipeline (re)counts variable usage of sheets.
@@ -576,8 +577,6 @@ test('1.5a: 20 одинаковых перестроек подряд не пе�
 test('1.5a: detach не оставляет [data-darkext] и очищает индекс масок; повторный start работает', async () => {
   const { tokens, mask } = maskPage();
   const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
-  const dark = varIn(tokens, '--c').l; // before the mask lookup: bg
-  expect(dark).toBeLessThan(0.4);
   await frame();
   expect(varIn(tokens, '--c').l).toBeGreaterThan(0.6);
   p.detach();
@@ -586,5 +585,48 @@ test('1.5a: detach не оставляет [data-darkext] и очищает ин
   p.start(cfg());
   await frame();
   expect(mirrorOf(tokens)).not.toBeNull();
-  expect(varIn(tokens, '--c').l).toBeCloseTo(dark, 5); // bg again: the index was cleared
+  expect(varIn(tokens, '--c').l).toBeLessThan(0.4); // bg again (#404244 → L≈0.34): the index was cleared
+});
+
+test('1.5a: старт с иконкой-маской — первое построение уже учитывает маску, без пересчёта в следующем кадре', async () => {
+  const { tokens } = maskPage();
+  const p = createPipeline(document, { fetchCss: vi.fn() });
+  calls.countVarUsage = 0;
+  p.start(cfg());
+  expect(calls.countVarUsage).toBe(4); // .card, tokens, icon rule, mask rule: each sheet counted once
+  expect(varIn(tokens, '--c').l).toBeGreaterThan(0.6); // light right after start
+  const before = mirrorOf(tokens)!.textContent;
+  await frame();
+  await frame();
+  expect(calls.countVarUsage).toBe(4);
+  expect(mirrorOf(tokens)!.textContent).toBe(before);
+});
+
+test('1.5a: добавленный элемент ищется в своём поддереве, а не во всём документе', async () => {
+  const { tokens } = maskPage();
+  document.querySelector('span.cdx-button__icon')!.remove(); // no mask element at start: --c stays bg
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  await frame();
+  expect(varIn(tokens, '--c').l).toBeLessThan(0.4);
+  const refresh = vi.spyOn(MaskIndex.prototype, 'refresh');
+  const wrap = document.createElement('div');
+  wrap.innerHTML = '<span class="cdx-button__icon menu"></span>';
+  document.body.append(wrap);
+  await frame();
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(refresh.mock.calls[0][0]).toEqual([wrap]);
+  expect(varIn(tokens, '--c').l).toBeGreaterThan(0.6); // found in the subtree: recount + rebuild
+});
+
+test('1.5a: индекс масок заполнен (300 сигнатур) → поиск больше не запускается', async () => {
+  style('.menu{-webkit-mask-image:url(a.svg)}');
+  document.body.insertAdjacentHTML('beforeend', Array.from({ length: 300 }, (_, i) => `<i class="menu c${i}"></i>`).join(''));
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  await frame();
+  const refresh = vi.spyOn(MaskIndex.prototype, 'refresh');
+  document.body.insertAdjacentHTML('beforeend', '<i class="menu extra"></i>');
+  style('.other{mask-image:url(b.svg)}'); // even a grown selector set does not trigger a lookup
+  await frame();
+  await frame();
+  expect(refresh).not.toHaveBeenCalled();
 });
