@@ -15,6 +15,12 @@ const TYPES: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',
 };
 
+/** Extra response headers per fixture path. */
+const HEADERS: Record<string, Record<string, string>> = {
+  // Only images are restricted (data: blocked); inline styles and scripts stay allowed.
+  '/icons-csp.html': { 'content-security-policy': "img-src 'self'" },
+};
+
 /** Images generated in code, served next to the fixture pages. */
 const GENERATED = iconImages();
 
@@ -38,7 +44,7 @@ function serve(port: number): Promise<Server> {
     Promise.all([readFile(file), new Promise((r) => setTimeout(r, delay))]).then(
       ([body]) => {
         // No CORS headers: the second origin's sheet stays unreadable from the page (cross-origin).
-        res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-store' });
+        res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-store', ...HEADERS[path] });
         res.end(body);
       },
       () => { res.writeHead(404).end(); },

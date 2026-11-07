@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Icon images under CSP</title>
+<!-- Served with `Content-Security-Policy: img-src 'self'` (see server.ts): data: images are blocked. -->
+<script>
+  window.__violations = [];
+  document.addEventListener('securitypolicyviolation', (e) => window.__violations.push(e.effectiveDirective + ' ' + e.blockedURI));
+</script>
+<style>
+  body { margin: 0; background: #fff; color: #000; }
+  .ic { display: inline-block; width: 48px; height: 16px; background: url(dark-glyph.png) 0 0 no-repeat; }
+</style></head>
+<body>
+  <div class="ic" id="ic"></div>
+  <img id="text" src="dark-text.svg" width="120" height="18" alt="">
+</body></html>

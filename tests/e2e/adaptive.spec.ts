@@ -329,3 +329,46 @@ test('turning the site off removes icon marks and inverted copies', async ({ con
   await expect(page.locator('[data-darkext-icon]')).toHaveCount(0);
   expect(await cssOf(page, '#ic', 'backgroundImage')).toMatch(/^url\("http:[^"]*dark-glyph\.png"\)$/);
 });
+
+/** Pixels of an element screenshot that differ from its top-left (background) pixel by more than `min` in a channel. */
+async function inkPixels(context: BrowserContext, png: Buffer, min = 8): Promise<number> {
+  const scratch = await context.newPage();
+  try {
+    return await scratch.evaluate(async ([b64, m]) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${b64}`;
+      await img.decode();
+      const ctx = document.createElement('canvas').getContext('2d')!;
+      ctx.canvas.width = img.naturalWidth;
+      ctx.canvas.height = img.naturalHeight;
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, img.naturalWidth, img.naturalHeight).data;
+      let n = 0;
+      for (let p = 0; p < d.length; p += 4) {
+        if (Math.max(Math.abs(d[p] - d[0]), Math.abs(d[p + 1] - d[1]), Math.abs(d[p + 2] - d[2])) > (m as number)) n++;
+      }
+      return n;
+    }, [png.toString('base64'), min] as const);
+  } finally {
+    await scratch.close();
+  }
+}
+
+test('CSP img-src without data: — the CSS icon is never blank (swapped and painted, or left original)', async ({ context }) => {
+  const page = await open(context, 'icons-csp.html');
+  // The <img> path (a CSS filter) is unaffected by the policy; the content script still decodes data: images.
+  await expect.poll(() => iconMark(page, '#text')).not.toBeNull();
+  await page.waitForTimeout(1500); // the sprite's analysis and swap attempt are done by now
+  const dataBlocked = () => page.evaluate(() => (window as unknown as { __violations: string[] }).__violations.some((v) => / data/.test(v)));
+  await expect.poll(async () => {
+    const bg = await cssOf(page, '#ic', 'backgroundImage');
+    if (bg.startsWith('url("data:')) {
+      // Swapped: only acceptable if the copy is allowed to render (light glyph on the dark page).
+      return !(await dataBlocked()) && (await inkPixels(context, await page.locator('#ic').screenshot())) > 20 ? 'swapped' : 'blank';
+    }
+    // Left as the original sprite: it paints (dark on dark, but there).
+    return /dark-glyph\.png/.test(bg) && (await inkPixels(context, await page.locator('#ic').screenshot(), 0)) > 20 ? 'original' : 'blank';
+  }).not.toBe('blank');
+  // Chromium 2026: data: is blocked here, so the swap is withdrawn and the variables style removed.
+  if (await dataBlocked()) await expect(page.locator('style[data-darkext=icon-vars]')).toHaveCount(0);
+});
