@@ -10,6 +10,7 @@ export interface PopupState { host: string | null; state: TabState; snapshot: Sn
 export type Request =
   | { type: 'GET_CONFIG' }
   | { type: 'FETCH_CSS'; url: string }
+  | { type: 'FETCH_IMAGE'; url: string }
   | { type: 'REPORT_STATE'; state: TabState }
   | { type: 'GET_TAB_STATE'; tabId: number }
   | { type: 'UPDATE_GLOBAL'; patch: Partial<GlobalSettings> }
@@ -20,6 +21,7 @@ export type ContentMessage = { type: 'CONFIG_CHANGED'; config: EffectiveConfig |
 export type ResponseOf<R extends Request> =
   R extends { type: 'GET_CONFIG' } ? EffectiveConfig | null
   : R extends { type: 'FETCH_CSS' } ? { text: string } | { error: string }
+  : R extends { type: 'FETCH_IMAGE' } ? { dataUrl: string; animated: boolean } | { error: string }
   : R extends { type: 'GET_TAB_STATE' } ? PopupState
   : R extends { type: 'UPDATE_GLOBAL' | 'UPDATE_SITE' } ? void | { error: string } // error: invalid patch, nothing changed
   : void;

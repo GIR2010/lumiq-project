@@ -3,6 +3,7 @@ import { GlobalPatchSchema, SitePatchSchema } from '../core/settings/schema';
 import type { ContentMessage, PopupState, Request, TabState } from '../shared/messages';
 import { setBadge } from './badge';
 import { fetchCss } from './css-fetch';
+import { fetchImage } from './image-fetch';
 import type { SentConfigs } from './sent-configs';
 import type { SettingsStore } from './settings-store';
 import type { TabStateStore } from './tab-state';
@@ -32,6 +33,9 @@ export function createRouter(store: SettingsStore, tabs: TabStateStore, sent?: S
         return configFor(store, sender.tab?.url);
       case 'FETCH_CSS':
         try { return { text: await fetchCss(msg.url) }; }
+        catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
+      case 'FETCH_IMAGE':
+        try { return await fetchImage(msg.url); }
         catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
       case 'REPORT_STATE': {
         const id = sender.tab?.id;

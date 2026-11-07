@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { resetImageCache } from './image-fetch';
 import { installFakeChrome } from '../../tests/fakes/chrome';
 import { SettingsStore } from './settings-store';
 import { TabStateStore } from './tab-state';
@@ -59,6 +60,19 @@ test('UPDATE_GLOBAL / UPDATE_SITE обновляют хранилище', async 
 test('FETCH_CSS: ошибка превращается в { error }', async () => {
   const store = new SettingsStore(); await store.ready; const r = createRouter(store, new TabStateStore());
   expect(await r({ type: 'FETCH_CSS', url: 'data:text/css,a{}' }, sender('https://a.com'))).toEqual({ error: 'unsupported scheme' });
+});
+
+describe('FETCH_IMAGE', () => {
+  afterEach(() => { vi.unstubAllGlobals(); resetImageCache(); });
+  test('успех: { dataUrl, animated }', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'content-type': 'image/png' } })));
+    const store = new SettingsStore(); await store.ready; const r = createRouter(store, new TabStateStore());
+    expect(await r({ type: 'FETCH_IMAGE', url: 'https://a.com/i.png' }, sender('https://a.com'))).toEqual({ dataUrl: 'data:image/png;base64,AQID', animated: false });
+  });
+  test('ошибка превращается в { error }', async () => {
+    const store = new SettingsStore(); await store.ready; const r = createRouter(store, new TabStateStore());
+    expect(await r({ type: 'FETCH_IMAGE', url: 'file:///a.png' }, sender('https://a.com'))).toEqual({ error: 'unsupported scheme' });
+  });
 });
 
 describe('broadcast', () => {
