@@ -1,4 +1,4 @@
-import { parseColor, formatColor, contrastRatio, isNeutral } from './index';
+import { parseColor, formatColor, contrastRatio, isNeutral, srgbToOklch } from './index';
 
 test.each(['#fff', '#ffffff', 'white', 'rgb(255 255 255)', 'rgba(255,255,255,1)', 'hsl(0 0% 100%)'])
   ('%s → белый', s => { const c = parseColor(s)!; expect(c.l).toBeCloseTo(1, 2); expect(c.alpha).toBe(1); });
@@ -22,4 +22,15 @@ test('none-каналы → 0', () => {
   const c = parseColor('oklch(none 0.1 20)')!;
   expect(c.l).toBe(0);
   expect(Number.isFinite(c.c)).toBe(true);
+});
+test('srgbToOklch: чёрный, белый, оттенок', () => {
+  expect(srgbToOklch(0, 0, 0).l).toBeCloseTo(0, 3);
+  const w = srgbToOklch(255, 255, 255);
+  expect(w.l).toBeCloseTo(1, 3);
+  expect(w.alpha).toBe(1);
+  expect(Number.isFinite(w.h)).toBe(true);
+  const ref = parseColor('#3366ff')!;
+  const c = srgbToOklch(0x33, 0x66, 0xff);
+  expect(c.l).toBeCloseTo(ref.l, 4);
+  expect(c.h).toBeCloseTo(ref.h, 2);
 });

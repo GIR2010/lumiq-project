@@ -62,3 +62,9 @@ export function contrastRatio(a: Oklch | string, b: Oklch | string): number {
 export function isNeutral(c: Oklch, threshold = 0.02): boolean {
   return c.c < threshold;
 }
+
+/** sRGB channels in 0..255 → OKLCH (alpha = 1; achromatic hue NaN → 0). */
+export function srgbToOklch(r: number, g: number, b: number): Oklch {
+  const o = toOklch({ mode: 'rgb', r: r / 255, g: g / 255, b: b / 255 });
+  return { l: o.l ?? 0, c: o.c ?? 0, h: o.h === undefined || Number.isNaN(o.h) ? 0 : o.h, alpha: 1 };
+}
