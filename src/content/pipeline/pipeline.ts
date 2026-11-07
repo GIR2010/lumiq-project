@@ -19,6 +19,8 @@ export interface PipelineDeps {
 export type PipelineStatus = 'ok' | 'heavy' | 'error';
 export interface Pipeline {
   start(cfg: EffectiveConfig): void; update(cfg: EffectiveConfig): void; detach(): void;
+  /** Stops observing without restoring the page (extension context invalidated). */
+  freeze(): void;
   setDisabled(disabled: boolean): void; addRoot(root: ShadowRoot): void; refreshSheet(sheet: CSSStyleSheet): void;
   /** A root's adoptedStyleSheets were assigned or (no root: any) adopted sheet changed; re-checked once per frame. */
   adoptedChanged(root?: Document | ShadowRoot): void;
@@ -624,32 +626,49 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     });
   }
 
-  function detach(): void {
+  const safe = (f: () => void) => { try { f(); } catch (e) { console.error('[DarkExt]', e); } };
+
+  /** Stops everything that reacts to the page (observers, listeners, timers, queued work). */
+  function stopWork(): void {
     running = false;
     session++;
     runId++;
-    fn = null;
     closeWindow();
-    dropFallback();
+    if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+    fallbackTimer = null;
+    dclWait = null;
     doc.removeEventListener('readystatechange', onReadyState);
-    const safe = (f: () => void) => { try { f(); } catch (e) { console.error('[DarkExt]', e); } };
     for (const stop of observers.values()) safe(stop);
     observers.clear();
     for (const stop of [...waiting.values()]) safe(stop);
     waiting.clear();
+    pendingRebuild.clear();
+    pendingRefresh.clear();
+    pendingRoots.clear();
+    allAdopted = false;
+    cancelFrame?.();
+    cancelFrame = null;
+  }
+
+  function detach(): void {
+    stopWork();
+    fn = null;
     safe(() => inline.restoreAll());
     safe(() => writer.clear());
     entries.clear();
     mirrored.clear();
     vars.clear();
     varDefs.clear();
-    pendingRebuild.clear();
-    pendingRefresh.clear();
-    pendingRoots.clear();
-    allAdopted = false;
     adoptedRoots.clear();
-    cancelFrame?.();
-    cancelFrame = null;
+  }
+
+  /**
+   * Extension context gone: stop reacting to the page but leave it as it is (spec §7). Only the
+   * transient fallback goes, since nothing could remove it any more.
+   */
+  function freeze(): void {
+    stopWork();
+    safe(() => writer.removeFallback());
   }
 
   function setDisabled(d: boolean): void {
@@ -698,7 +717,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   }
 
   return {
-    start, update, detach, setDisabled, addRoot, refreshSheet, adoptedChanged,
+    start, update, detach, freeze, setDisabled, addRoot, refreshSheet, adoptedChanged,
     status: () => current,
     onStatus: (cb) => { statusListeners.push(cb); },
   };

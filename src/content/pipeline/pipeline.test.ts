@@ -459,3 +459,19 @@ test('I3: лист, общий для двух shadow root, зеркалируе
   p.detach();
   expect(r2.adoptedStyleSheets).toEqual([shared]);
 });
+
+test('M4: freeze останавливает наблюдение, не трогая страницу (зеркала, base и inline остаются)', async () => {
+  const card = document.querySelector('.card')!;
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  const darkened = card.getAttribute('style');
+  p.freeze();
+  const s = style('.x{background-color:#fff}');
+  card.setAttribute('style', 'color:#000');
+  p.refreshSheet((document.querySelector('style:not([data-darkext])') as HTMLStyleElement).sheet!);
+  await frame();
+  expect(mirrorOf(s)).toBeNull();
+  expect(card.getAttribute('style')).toBe('color:#000'); // not re-styled: the observer is gone
+  expect(document.querySelectorAll('[data-darkext=mirror]').length).toBe(1);
+  expect(document.querySelectorAll('[data-darkext=base]').length).toBe(1);
+  expect(darkened).not.toBe('color:#000');
+});

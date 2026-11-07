@@ -13,6 +13,7 @@ let dead = false;
 function die(): void {
   dead = true;
   controller?.stop();
+  try { pipeline.freeze(); } catch { /* never throw into the page */ }
   document.removeEventListener('darkext:shadow', onShadowG, true);
   document.removeEventListener('darkext:adopted', onAdoptedG, true);
   document.removeEventListener('darkext:sheet-changed', onSheetG, true);
