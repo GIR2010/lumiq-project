@@ -87,8 +87,18 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   let session = 0;
   /** Bumped by every schedule and by detach: chunks of an older run become no-ops. */
   let runId = 0;
-  /** Build time spent in this session (start + everything after it, update included). */
+  /**
+   * Load window: from start until the sheets known at `load` are processed. Only first builds inside
+   * it are charged to the budget, and only exceeding it there makes the status 'heavy'.
+   */
+  let windowOpen = false;
   let spentMs = 0;
+  let exceeded = false;
+  /** Sources processed at least once (mirror written or nothing to mirror) / given up on, this session. */
+  const built = new Set<Source>();
+  const failed = new Set<Source>();
+  /** Document sources not finished when `load` came: the window closes once they are. */
+  let loadWait: Set<Source> | null = null;
 
   function setStatus(s: PipelineStatus): void {
     if (s === current) return;
@@ -108,24 +118,67 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     try { f(); } catch (e) { fail(e); }
   }
 
-  const exhausted = () => spentMs >= BUDGET_MS;
-
-  /** Runs `f`, charging its time to the session budget; crossing the budget makes the status 'heavy'. */
+  /** Runs `f`; inside the load window its time is charged to the budget, and crossing it makes the status 'heavy'. */
   function charge(f: () => void, t0 = now()): void {
+    if (!windowOpen) {
+      f();
+      return;
+    }
     try {
       f();
     } finally {
       spentMs += now() - t0;
-      if (running && exhausted()) setStatus('heavy');
+      if (running && windowOpen && !exceeded && spentMs >= BUDGET_MS) {
+        exceeded = true;
+        setStatus('heavy');
+      }
     }
   }
 
-  /** Over budget, sheets without a mirror are left alone (applied ones are still rebuilt). */
+  /** First builds are charged; rebuilds of processed sources (update, refresh, role changes) never are. */
+  function chargeFirst(source: Source, f: () => void): void {
+    if (built.has(source)) f(); else charge(f);
+  }
+
+  /** Over budget inside the load window, sheets not processed yet are dropped (processed ones are still rebuilt). */
   function blocked(source: Source): boolean {
-    if (mirrored.has(source) || !exhausted()) return false;
+    if (!windowOpen || !exceeded || built.has(source)) return false;
+    settle(source, false);
     setStatus('heavy');
     return true;
   }
+
+  // --- progress: which sources are finished ---
+
+  function settle(source: Source, ok: boolean): void {
+    if (ok) { built.add(source); failed.delete(source); } else failed.add(source);
+    release(source);
+  }
+
+  /** The source no longer holds back the load window (finished, failed or gone). */
+  function release(source: Source): void {
+    if (loadWait?.delete(source) && !loadWait.size) closeWindow();
+  }
+
+  function unfinished(): Set<Source> {
+    return new Set(sourcesOf(doc).filter((s) => !built.has(s) && !failed.has(s)));
+  }
+
+  function closeWindow(): void {
+    windowOpen = false;
+    loadWait = null;
+  }
+
+  /** Takes the `load` snapshot once the document is complete. */
+  function checkReadiness(): void {
+    if (!running) return;
+    if (doc.readyState === 'complete' && windowOpen && !loadWait) {
+      loadWait = unfinished();
+      if (!loadWait.size) closeWindow();
+    }
+  }
+
+  const onReadyState = () => guard(checkReadiness);
 
   // --- rules, counting, mirrors ---
 
@@ -211,6 +264,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   }
 
   function forget(source: Source): void {
+    release(source);
     entries.delete(source);
     varDefs.delete(source);
     pendingRebuild.delete(source);
@@ -228,6 +282,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     const rules = rulesOf(item);
     if (!rules) return;
     const css = mirrorCss(rules, fn);
+    settle(source, true);
     if (!css) {
       unmirror(source);
       return;
@@ -242,10 +297,10 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     for (const s of entry.root.adoptedStyleSheets) if (!before.has(s)) ownSheets.add(s);
   }
 
-  /** Count + build right away (observer, load, fetch, refresh paths), charged to the session budget. */
+  /** Count + build right away (observer, load, fetch, refresh paths); a first build is charged to the budget. */
   function processNow(item: Item | null): void {
     if (!item || blocked(item.source)) return;
-    charge(() => {
+    chargeFirst(item.source, () => {
       const changed = count(item);
       build(item);
       rebuildDefiners(changed, new Set([item.source]));
@@ -258,15 +313,19 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     if (waiting.has(el)) return;
     const stop = () => {
       el.removeEventListener('load', onLoad);
-      el.removeEventListener('error', stop);
+      el.removeEventListener('error', onError);
       waiting.delete(el);
     };
     const onLoad = () => {
       stop();
       guard(() => { if (running) processNow(resolve(el, root)); });
     };
+    const onError = () => {
+      stop();
+      guard(() => { if (running) settle(el, false); });
+    };
     el.addEventListener('load', onLoad);
-    el.addEventListener('error', stop);
+    el.addEventListener('error', onError);
     waiting.set(el, stop);
   }
 
@@ -299,13 +358,16 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     loadCss(url, new Set()).then(
       (text) => guard(() => {
         if (s !== session || !running) return;
-        if (source instanceof Element && !source.isConnected) return;
-        if (sheetOf(source)?.href !== url) return; // the sheet was replaced meanwhile
+        if ((source instanceof Element && !source.isConnected) || sheetOf(source)?.href !== url) {
+          release(source); // gone or replaced meanwhile
+          return;
+        }
         const entry: Entry = { root, parsed: parseCssText(text) };
         entries.set(source, entry);
         processNow({ source, entry });
       }),
-      () => { /* fetch failed: the sheet is skipped, status unchanged */ },
+      // Fetch failed: the sheet is skipped, status unchanged.
+      () => guard(() => { if (s === session && running) settle(source, false); }),
     );
   }
 
@@ -327,6 +389,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     }
     if (rules === 'cross-origin') {
       if (sheet.href) loadCrossOrigin(source, sheet.href, root);
+      else settle(source, false);
       return null;
     }
     const entry: Entry = { root, parsed: null };
@@ -405,10 +468,11 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
         inlineTasks.push(task(() => applyInline(batch)));
       }
     }
-    const buildTask = (i: Item) => task(() => charge(() => build(i)));
+    const buildTask = (i: Item) => task(() => chargeFirst(i.source, () => build(i)));
     const tasks = [...head.slice(0, n).map(buildTask), ...inlineTasks, ...head.slice(n).map(buildTask), ...rest.map(buildTask)];
-    runChunked(tasks, { syncCount: n + inlineTasks.length, budgetMs: BUDGET_MS, syncBudgetMs: FIRST_PASS_MS, startedAt, now }).then(
-      (res) => { if (id === runId && running && res === 'budget') setStatus('heavy'); },
+    // The total budget is build time inside the load window (charge/blocked), not wall-clock time.
+    runChunked(tasks, { syncCount: n + inlineTasks.length, budgetMs: Infinity, syncBudgetMs: FIRST_PASS_MS, startedAt, now }).then(
+      () => {},
       (e) => { if (id === runId && running) fail(e); },
     );
   }
@@ -463,7 +527,12 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       const t0 = now(); // resolving and counting are charged to the first pass
       running = true;
       session++;
+      windowOpen = true;
       spentMs = 0;
+      exceeded = false;
+      built.clear();
+      failed.clear();
+      loadWait = null;
       fn = makeColorFn(cfg);
       writer.setBase(buildBaseCss(cfg.colors, fn, cfg.adj));
       let items: Item[] = [];
@@ -477,6 +546,8 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
         if (r.host.isConnected) attachRoot(r);
         else roots.delete(r);
       }
+      doc.addEventListener('readystatechange', onReadyState);
+      checkReadiness();
     });
   }
 
@@ -487,7 +558,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     }
     guard(() => {
       const t0 = now();
-      setStatus(exhausted() ? 'heavy' : 'ok'); // same session: the budget already spent still counts
+      setStatus(exceeded ? 'heavy' : 'ok'); // 'heavy' only ever comes from the load window
       fn = makeColorFn(cfg);
       // Variable counts are kept per source and are independent of the config: no recount.
       pendingRebuild.clear();
@@ -503,6 +574,8 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     session++;
     runId++;
     fn = null;
+    closeWindow();
+    doc.removeEventListener('readystatechange', onReadyState);
     const safe = (f: () => void) => { try { f(); } catch (e) { console.error('[DarkExt]', e); } };
     for (const stop of observers.values()) safe(stop);
     observers.clear();

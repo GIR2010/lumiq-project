@@ -224,7 +224,9 @@ test('бюджет первого прохода: время сбора и по�
   expect(p.status()).toBe('ok');
 });
 
-test('бюджет сессии: листы после старта сверх 3000 мс → heavy, новый лист не зеркалируется, update перестраивает применённые', async () => {
+test('бюджет окна загрузки: листы после старта сверх 3000 мс → heavy, новый лист не зеркалируется, update перестраивает применённые', async () => {
+  // The budget covers the load window only: the document is still loading here.
+  const readyState = vi.spyOn(document, 'readyState', 'get').mockReturnValue('loading');
   let t = 0, step = 0;
   const p = createPipeline(document, { fetchCss: vi.fn(), now: () => (t += step) });
   const seen: string[] = []; p.onStatus(s => seen.push(s));
@@ -248,6 +250,29 @@ test('бюджет сессии: листы после старта сверх 3
   expect(a.nextElementSibling!.textContent).not.toBe(before);
   expect(c.nextElementSibling?.getAttribute('data-darkext')).not.toBe('mirror');
   expect(p.status()).toBe('heavy');
+  // Load finished: the window closes and sheets added later are processed normally (status stays heavy).
+  readyState.mockReturnValue('complete');
+  document.dispatchEvent(new Event('readystatechange'));
+  step = 2000;
+  const d = add('d');
+  await frame();
+  expect(d.nextElementSibling?.getAttribute('data-darkext')).toBe('mirror');
+  expect(p.status()).toBe('heavy');
+});
+
+test('I2: после окна загрузки update() и новые листы не тратят бюджет: статус не heavy, поздний лист зеркалируется', async () => {
+  let t = 0, step = 0;
+  const p = createPipeline(document, { fetchCss: vi.fn(), now: () => (t += step) });
+  const seen: string[] = []; p.onStatus(s => seen.push(s));
+  p.start(cfg()); // jsdom: the document is complete, so the window closes after the first pass
+  step = 1000; // every measured stretch now "takes" 1000 ms
+  const oled = { ...cfg(), colors: PRESETS.find(x => x.id === 'oled')!.colors };
+  for (let i = 0; i < 6; i++) { p.update(i % 2 ? cfg() : oled); await settle(); }
+  const late = style('.late{background-color:#fff}');
+  await frame();
+  expect(mirrorOf(late)).not.toBeNull();
+  expect(p.status()).toBe('ok');
+  expect(seen).toEqual([]);
 });
 
 test('fetchCss завершился после detach → ничего не пишется; следующий start работает без повторной загрузки', async () => {
