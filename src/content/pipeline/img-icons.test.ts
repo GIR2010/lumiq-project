@@ -232,3 +232,45 @@ test('исключение при применении вердикта не с�
   expect(debug).toHaveBeenCalledWith('[DarkExt] icon analysis failed', 'https://x.test/1.png');
   debug.mockRestore();
 });
+
+test('I3: <img>, удалённая до load, забывается (scan/prune): слушатели сняты', () => {
+  const a = fakeAnalyzer();
+  const icons = new ImgIcons(a as never);
+  const { img, state } = makeImg({ complete: false, src: 'https://x.test/gone.png' });
+  const { img: other, state: otherState } = makeImg({ complete: false, src: 'https://x.test/stays.png' });
+  icons.consider(img); icons.consider(other);
+  const removed = vi.spyOn(img, 'removeEventListener');
+  img.remove();
+  icons.prune();
+  expect(removed.mock.calls.map((c) => c[0]).sort()).toEqual(['error', 'load']);
+  state.complete = true;
+  img.dispatchEvent(new Event('load'));
+  expect(a.request).not.toHaveBeenCalled();
+  otherState.complete = true;
+  other.dispatchEvent(new Event('load')); // still connected: still waited for
+  expect(a.request).toHaveBeenCalledWith('https://x.test/stays.png');
+  // scan prunes too
+  const { img: second, state: s2 } = makeImg({ complete: false, src: 'https://x.test/gone2.png' });
+  icons.consider(second);
+  second.remove();
+  icons.scan(document);
+  s2.complete = true;
+  second.dispatchEvent(new Event('load'));
+  expect(a.request).not.toHaveBeenCalledWith('https://x.test/gone2.png');
+});
+
+test('I5: маяки — сторона < 8 px (на экране или естественная) не анализируется; 8×8 — анализируется', () => {
+  const a = fakeAnalyzer();
+  const icons = new ImgIcons(a as never);
+  icons.consider(makeImg({ w: 1, h: 1, src: 'https://x.test/pixel.gif' }).img);
+  icons.consider(makeImg({ w: 7, h: 24, src: 'https://x.test/narrow.png' }).img);
+  const scaled = makeImg({ w: 24, h: 24, src: 'https://x.test/scaled-beacon.gif' }).img;
+  Object.defineProperty(scaled, 'naturalWidth', { value: 1 }); Object.defineProperty(scaled, 'naturalHeight', { value: 1 });
+  icons.consider(scaled);
+  const hidden = makeImg({ w: 0, h: 0, src: 'https://x.test/hidden-beacon.gif' }).img;
+  Object.defineProperty(hidden, 'naturalWidth', { value: 1 }); Object.defineProperty(hidden, 'naturalHeight', { value: 1 });
+  icons.consider(hidden);
+  expect(a.request).not.toHaveBeenCalled();
+  icons.consider(makeImg({ w: 8, h: 8, src: 'https://x.test/tiny-icon.png' }).img);
+  expect(a.request).toHaveBeenCalledWith('https://x.test/tiny-icon.png');
+});

@@ -402,6 +402,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   /** Per-frame work after the batch: inline cleanup, mask lookup, queued rebuilds. */
   function frameWork(): void {
     pruneInline();
+    imgIcons?.prune(); // <img> removed before they loaded
     checkMasks();
     flushRebuilds();
   }

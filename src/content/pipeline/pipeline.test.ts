@@ -888,3 +888,16 @@ test('1.5b: теневой корень получает правило знач
   const q = createPipeline(document, { fetchCss: vi.fn() }); q.start(cfg()); q.addRoot(root);
   expect(root.querySelector('[data-darkext]')).toBeNull();
 });
+
+test('I3: <img>, удалённая до load, забывается после кадра наблюдателя', async () => {
+  const a = verdicts({});
+  const img = iconImg('https://x.test/slow.png');
+  let complete = false;
+  Object.defineProperty(img, 'complete', { configurable: true, get: () => complete });
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
+  img.remove();
+  await frame(); await frame();
+  complete = true;
+  img.dispatchEvent(new Event('load'));
+  expect(a.request).not.toHaveBeenCalled();
+});

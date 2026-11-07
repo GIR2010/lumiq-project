@@ -3,6 +3,8 @@ import type { ImageAnalyzer } from './images';
 const ATTR = 'data-darkext-icon';
 /** Both displayed sides must be at most this many CSS pixels. */
 const MAX_SIDE = 400;
+/** Smaller than this on either side (displayed or natural): a tracking pixel or spacer, not an icon. */
+const MIN_SIDE = 8;
 /** The service worker fetches http(s) only; data: URLs are decoded on the page. blob: etc. are skipped. */
 const ANALYZABLE = /^(?:https?|data):/i;
 
@@ -45,6 +47,12 @@ export class ImgIcons {
     // Not rendered (e.g. in a closed menu): its natural size decides, so it is ready once shown.
     if (width === 0 && height === 0) ({ naturalWidth: width, naturalHeight: height } = img);
     if (width === 0 && height === 0) return; // no size at all (broken image)
+    // Beacons: tiny on screen, or a tiny file stretched (a natural 0 is an SVG without intrinsic size).
+    const tinyNatural = (img.naturalWidth > 0 && img.naturalWidth < MIN_SIDE) || (img.naturalHeight > 0 && img.naturalHeight < MIN_SIDE);
+    if (width < MIN_SIDE || height < MIN_SIDE || tinyNatural) {
+      this.unmark(img);
+      return;
+    }
     if (width > MAX_SIDE || height > MAX_SIDE) {
       this.unmark(img);
       return;
@@ -74,7 +82,13 @@ export class ImgIcons {
   scan(root: ParentNode): void {
     if (this.stopped) return;
     if (root instanceof Document || root instanceof ShadowRoot) this.roots.add(root);
+    this.prune();
     for (const img of Array.from(root.querySelectorAll('img'))) this.consider(img);
+  }
+
+  /** Forgets images removed from the page before they loaded (their listeners go); a re-added one is considered again. */
+  prune(): void {
+    for (const [img, stop] of [...this.waiting]) if (!img.isConnected) stop();
   }
 
   /** Stops listening; late verdicts are dropped. The marks stay (frozen page). */
