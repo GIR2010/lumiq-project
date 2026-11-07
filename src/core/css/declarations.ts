@@ -1,3 +1,4 @@
+import { parse as cssParse, rgb as toRgb } from 'culori';
 import { parseColor } from '../color';
 import type { ColorFn, Role, RuleContext } from '../mapping/types';
 
@@ -54,6 +55,47 @@ function opaqueEnd(value: string, start: number): number {
   return value.length;
 }
 
+const COLOR_FN_START = /(?<![\w-])(rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/gi;
+
+/** Index of the paren closing the one at `open`, or -1. */
+function closingParen(value: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < value.length; i++) {
+    if (value[i] === '(') depth++;
+    else if (value[i] === ')' && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/** Splits colour-function arguments whose only `var()` stands in the alpha slot. */
+function splitVarAlpha(inner: string): { channels: string; sep: 'slash' | 'comma'; alpha: string } | null {
+  const lower = inner.toLowerCase();
+  const v = lower.indexOf('var(');
+  if (v < 0 || lower.indexOf('var(', v + 4) >= 0) return null;
+  const end = closingParen(inner, v + 3);
+  if (end < 0 || inner.slice(end + 1).trim() !== '') return null;
+  const head = inner.slice(0, v).trimEnd();
+  const sep = head.endsWith('/') ? 'slash' : head.endsWith(',') ? 'comma' : null;
+  if (!sep) return null;
+  const channels = head.slice(0, -1).trim();
+  if (!channels || /[()"'\/]/.test(channels)) return null;
+  return { channels, sep, alpha: inner.slice(v, end + 1) };
+}
+
+/** Recolours `name(channels / var(--a))`; the var() text is kept verbatim. Null when not applicable. */
+function mapVarAlphaColor(name: string, inner: string, role: Role, fn: ColorFn, ctx: RuleContext): string | null {
+  const parts = splitVarAlpha(inner);
+  if (!parts) return null;
+  const literal = parseColor(`${name}(${parts.channels}${parts.sep === 'slash' ? ' / ' : ','}1)`);
+  if (!literal) return null;
+  const mapped = cssParse(fn(literal, role, ctx));
+  if (!mapped) return null;
+  const { r, g, b } = toRgb(mapped);
+  const ch = [r, g, b].map((x) => Math.round(Math.min(1, Math.max(0, x)) * 255));
+  if (parts.sep === 'slash') return `rgb(${ch.join(' ')} / ${parts.alpha})`;
+  return `${/^rgba$/i.test(name) ? 'rgba' : 'rgb'}(${ch.join(',')},${parts.alpha})`;
+}
+
 interface Mapped { text: string; changed: boolean }
 
 function mapTokens(value: string, role: Role, fn: ColorFn, ctx: RuleContext): Mapped {
@@ -73,6 +115,20 @@ function mapTokens(value: string, role: Role, fn: ColorFn, ctx: RuleContext): Ma
       out += value.slice(pos, end);
       pos = end;
       continue;
+    }
+    const fnRe = new RegExp(COLOR_FN_START.source, 'gi');
+    fnRe.lastIndex = pos;
+    const cf = varIdx >= 0 ? fnRe.exec(value) : null;
+    if (cf && cf.index < varIdx && (!m || cf.index <= m.index)) {
+      const open = cf.index + cf[0].length - 1;
+      const close = closingParen(value, open);
+      const mapped = close > 0 ? mapVarAlphaColor(cf[1], value.slice(open + 1, close), role, fn, ctx) : null;
+      if (mapped !== null) {
+        out += value.slice(pos, cf.index) + mapped;
+        changed = true;
+        pos = close + 1;
+        continue;
+      }
     }
     if (varIdx >= 0 && (!m || varIdx <= m.index)) {
       // Copy up to var(, keep the custom property name, map only the fallback.

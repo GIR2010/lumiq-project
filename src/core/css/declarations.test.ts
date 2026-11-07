@@ -36,3 +36,17 @@ test.each([
 ])('opaque spans / function names: %s: %s', (p, v, out) => expect(mapDeclarationValue(p, v, fn, ctx)).toBe(out));
 test.each([['stroke', 'url(#ccc)'], ['fill', 'url(red.svg#a)'], ['color', '"red"'], ['fill', "url('a red.svg')"]])
   ('%s: %s → null', (p, v) => expect(mapDeclarationValue(p, v, fn, ctx)).toBeNull());
+test.each([
+  ['color', 'rgb(42 42 47/var(--tw-text-opacity))', 'rgb(238 238 238 / var(--tw-text-opacity))'],
+  ['background-color', 'rgb(255 255 255/var(--tw-bg-opacity))', 'rgb(17 17 17 / var(--tw-bg-opacity))'],
+  ['background-color', 'rgba(255,255,255,var(--a))', 'rgba(17,17,17,var(--a))'],
+  ['color', 'hsl(0 0% 10% / var(--a))', 'rgb(238 238 238 / var(--a))'],
+])('%s: %s → %s', (p, v, out) => expect(mapDeclarationValue(p, v, fn, ctx)).toBe(out));
+test.each([
+  ['color', 'rgb(var(--r) 0 0)'], ['color', 'rgb(var(--r) var(--g) var(--b) / var(--a))'], ['color', 'rgb(1 2 3 / var(--a) extra)'],
+])('var на месте канала или мусор → null: %s %s', (p, v) => expect(mapDeclarationValue(p, v, fn, ctx)).toBeNull());
+test('вложенный фолбэк: var(--x, rgb(0 0 0/var(--a)))', () =>
+  expect(mapDeclarationValue('color', 'var(--x, rgb(0 0 0/var(--a)))', fn, ctx)).toBe('var(--x, rgb(238 238 238 / var(--a)))'));
+test('box-shadow с несколькими такими цветами', () =>
+  expect(mapDeclarationValue('box-shadow', '0 0 0 1px rgb(0 0 0/var(--a)), 0 1px rgb(0 0 0/var(--b))', fn, ctx))
+    .toBe('0 0 0 1px rgb(17 17 17 / var(--a)), 0 1px rgb(17 17 17 / var(--b))'));
