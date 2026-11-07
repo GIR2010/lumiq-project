@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { applyGlobalPatch, applySitePatch, type Patch } from '../../core/settings/patch';
 import type { GlobalSettings, SiteSettings } from '../../core/settings/schema-types';
-import { sendToBackground, type PopupState } from '../../shared/messages';
+import { sendToBackground, type PopupState, type TabState } from '../../shared/messages';
 
 export type Scope = 'global' | 'site';
 
@@ -40,6 +40,27 @@ export function usePopupState() {
     })();
     return () => { alive = false; };
   }, [attempt]);
+
+  // Live updates while the popup is open: the tab's status (written by the service worker to
+  // storage.session) is taken as is; a settings change elsewhere re-reads the whole state.
+  useEffect(() => {
+    if (tabId === null) return;
+    let alive = true;
+    const tabKey = `tab:${tabId}`;
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === 'session') {
+        const next = changes[tabKey]?.newValue as TabState | undefined;
+        if (next) setState((s) => s && (s.host === null ? s : { ...s, state: next }));
+      } else if (area === 'sync') {
+        sendToBackground({ type: 'GET_TAB_STATE', tabId }).then(
+          (s) => { if (alive && s) setState(s); },
+          (e: unknown) => console.warn('[DarkExt] failed to refresh popup state', e),
+        );
+      }
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => { alive = false; chrome.storage.onChanged.removeListener(onChanged); };
+  }, [tabId]);
 
   const retryLoad = useCallback(() => { setFailed(false); setAttempt((n) => n + 1); }, []);
 

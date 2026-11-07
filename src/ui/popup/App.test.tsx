@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, test, expect, vi, type Mock } from 'vitest';
 import { installFakeChrome } from '../../../tests/fakes/chrome';
@@ -61,4 +61,18 @@ test('группы переключателей имеют собственны�
   await screen.findByRole('radio', { name: 'siteOff' });
   expect(screen.getByRole('radiogroup', { name: 'scopeLabel' })).toBeTruthy();
   expect(screen.getByRole('radiogroup', { name: 'globalToggleLabel' })).toBeTruthy();
+});
+
+test('M1: статус вкладки и настройки обновляются, пока popup открыт', async () => {
+  mockState(); render(<App />);
+  expect(await screen.findByText('statusActive')).toBeTruthy();
+  await chrome.storage.session.set({ 'tab:8': { status: 'error', detectedDark: false } }); // another tab: ignored
+  await chrome.storage.session.set({ 'tab:7': { status: 'already-dark', detectedDark: true } });
+  expect(await screen.findByText('alreadyDarkBanner')).toBeTruthy();
+  expect(screen.queryByText('statusError')).toBeNull();
+  // Settings changed elsewhere (another device, a hotkey): the state is read again.
+  const g = { ...DEFAULT_GLOBAL, def: 'off' as const };
+  mockState({ state: { status: 'already-dark', detectedDark: true }, snapshot: { g, styles: [], sites: {} } });
+  await chrome.storage.sync.set({ g });
+  await waitFor(() => expect(screen.getByRole('radio', { name: 'globalOff' }).getAttribute('aria-checked')).toBe('true'));
 });
