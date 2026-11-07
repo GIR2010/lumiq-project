@@ -4,19 +4,24 @@ import { createAdaptiveMapper } from '../../core/mapping/adaptive';
 import { createColorFn } from '../../core/mapping/color-fn';
 import type { ColorFn, ColorMapper } from '../../core/mapping/types';
 import type { EffectiveConfig } from '../../core/settings/resolve';
+import type { ImageAnalyzer } from './images';
 import { InlineStyler } from './inline';
 import { MaskIndex } from './masks';
-import { buildMirrorCss } from './mirror';
+import { buildMirrorCss, type IconLookup } from './mirror';
 import { isOwnNode, isStylesheetLink, observeRoot, scheduleFrame, type ObserverHandlers } from './observer';
 import { runChunked } from './scheduler';
-import { countStyleDeclaration, countVarUsage, extractImports, parseCssText, readRules } from './sheets';
+import { collectImageUrls, countStyleDeclaration, countVarUsage, extractImports, parseCssText, readRules, ruleBase } from './sheets';
 import { StyleWriter } from './writer';
 
 export interface PipelineDeps {
   fetchCss(url: string): Promise<string>;
   /** Clock for the budgets (default `performance.now`); injectable for tests. */
   now?: () => number;
+  /** Icon analyzer factory: one analyzer per session (created by start, disposed by detach/freeze). */
+  images?: () => Icons;
 }
+/** The part of `ImageAnalyzer` the pipeline uses. */
+export type Icons = Pick<ImageAnalyzer, 'get' | 'request' | 'onResult' | 'dispose'>;
 export type PipelineStatus = 'ok' | 'heavy' | 'error';
 export interface Pipeline {
   start(cfg: EffectiveConfig): void; update(cfg: EffectiveConfig): void; detach(): void;
@@ -99,6 +104,11 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   const pendingRoots = new Set<Root>();
   let allAdopted = false;
   let cancelFrame: (() => void) | null = null;
+  /** This session's icon analyzer, the URLs already requested from it, and the image URLs of each source. */
+  let icons: Icons | null = null;
+  const requested = new Set<string>();
+  const imageUrls = new Map<Source, Set<string>>();
+  const iconLookup: IconLookup = (url) => icons?.get(url)?.inverted;
   const now = deps.now ?? (() => performance.now());
 
   let running = false;
@@ -255,7 +265,43 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       const inner = mirrorCss(r, colorFn, depth + 1);
       css += media && inner ? `@media ${media}{${inner}}` : inner;
     });
-    return css + buildMirrorCss(rules, colorFn, vars, isMask);
+    return css + buildMirrorCss(rules, colorFn, vars, isMask, icons ? iconLookup : undefined);
+  }
+
+  /**
+   * Image URLs of the rules (imports included), resolved against the same base the mirror uses for
+   * them (`ruleBase`: every rule of a list shares its sheet).
+   */
+  function collectUrls(rules: CSSRuleList, out: Set<string>, depth = 0): void {
+    forEachImport(rules, depth, (r) => collectUrls(r, out, depth + 1));
+    if (!rules.length) return;
+    for (const url of collectImageUrls(rules, ruleBase(rules[0]))) out.add(url);
+  }
+
+  /** Records the source's image URLs and requests the ones not requested yet; analysis is async and never fails the pipeline. */
+  function requestIcons(source: Source, rules: CSSRuleList): void {
+    if (!icons) return;
+    const urls = new Set<string>();
+    collectUrls(rules, urls);
+    if (urls.size) imageUrls.set(source, urls); else imageUrls.delete(source);
+    for (const url of urls) {
+      if (requested.has(url)) continue;
+      requested.add(url);
+      try {
+        Promise.resolve(icons.request(url)).catch(() => console.debug('[DarkExt] icon analysis failed', url));
+      } catch {
+        console.debug('[DarkExt] icon analysis failed', url);
+      }
+    }
+  }
+
+  /** A dark icon got its inverted copy: every built source using it is rebuilt at the end of the frame (no recount). */
+  function onIcon(url: string, r: { inverted?: string }): void {
+    if (!running || !r.inverted) return;
+    for (const [source, urls] of imageUrls) {
+      if (urls.has(url) && built.has(source)) pendingRebuild.add(source);
+    }
+    if (pendingRebuild.size) requestFrame();
   }
 
   /**
@@ -271,7 +317,10 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     const counts = new VarRoleCounter();
     const defs = new Set<string>();
     const links: VarLinks = [];
-    if (rules) countRules(rules, counts, defs, links);
+    if (rules) {
+      countRules(rules, counts, defs, links);
+      requestIcons(item.source, rules);
+    }
     varDefs.set(item.source, defs);
     return vars.set(item.source, counts, links);
   }
@@ -293,7 +342,8 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     pendingRebuild.clear();
     for (const source of list) {
       const entry = entries.get(source);
-      if (running && entry && mirrored.has(source)) build({ source, entry });
+      // Built sources only: an icon swap may give a source without a mirror its first one.
+      if (running && entry && built.has(source)) build({ source, entry });
     }
   }
 
@@ -381,6 +431,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     entries.delete(source);
     if (!(source instanceof Element)) adoptedRoots.delete(source);
     varDefs.delete(source);
+    imageUrls.delete(source);
     pendingRebuild.delete(source);
     rebuildDefiners(vars.delete(source));
     unmirror(source);
@@ -695,6 +746,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       failed.clear();
       loadWait = null;
       fn = makeColorFn(cfg);
+      startIcons();
       writer.setBase(buildBaseCss(cfg.colors, fn, cfg.adj));
       // Replaces the placeholder: html/body stay dark until the sheets known at DOMContentLoaded are mirrored.
       writer.setFallback(buildFallbackCss(fn));
@@ -743,6 +795,21 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
 
   const safe = (f: () => void) => { try { f(); } catch (e) { console.error('[DarkExt]', e); } };
 
+  function startIcons(): void {
+    if (!deps.images) return;
+    const a = deps.images();
+    icons = a;
+    a.onResult((url, r) => { if (icons === a) guard(() => onIcon(url, r)); });
+  }
+
+  function stopIcons(): void {
+    const a = icons;
+    icons = null;
+    requested.clear();
+    imageUrls.clear();
+    if (a) safe(() => a.dispose());
+  }
+
   /** Stops everything that reacts to the page (observers, listeners, timers, queued work). */
   function stopWork(): void {
     running = false;
@@ -765,6 +832,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     addedNodes.clear();
     cancelFrame?.();
     cancelFrame = null;
+    stopIcons();
   }
 
   function detach(): void {

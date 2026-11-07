@@ -41,3 +41,10 @@ test('FETCH_CSS: {error} → отклонение, {text} → текст', async
   const ok = setup(() => ({ text: 'a{}' }));
   await expect(ok.m.fetchCss('https://x/a.css')).resolves.toBe('a{}');
 });
+test('FETCH_IMAGE: {error} → отклонение, {dataUrl, animated} → результат', async () => {
+  const bad = setup(() => ({ error: 'too large' }));
+  await expect(bad.m.fetchImage('https://x/a.png')).rejects.toThrow('too large');
+  const ok = setup(() => ({ dataUrl: 'data:image/png;base64,AA', animated: false }));
+  await expect(ok.m.fetchImage('https://x/a.png')).resolves.toEqual({ dataUrl: 'data:image/png;base64,AA', animated: false });
+  expect(ok.sendMessage).toHaveBeenCalledWith({ type: 'FETCH_IMAGE', url: 'https://x/a.png' });
+});

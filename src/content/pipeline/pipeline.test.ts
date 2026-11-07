@@ -645,3 +645,136 @@ test('1.5a: shadow root, подключённый позже, ищется по 
   await frame();
   expect(varIn(tokens, '--c').l).toBeGreaterThan(0.6);
 });
+
+// --- 1.5b: dark CSS icons ---
+
+type Icon = import('./images').IconResult;
+/** Fake analyzer: results are delivered by `finish`; listeners keep firing even after dispose (worst case). */
+function fakeAnalyzer(opts: { request?: (url: string) => Promise<Icon> } = {}) {
+  const results = new Map<string, Icon>();
+  const listeners = new Set<(url: string, r: Icon) => void>();
+  const a = {
+    request: vi.fn(opts.request ?? (() => new Promise<Icon>(() => {}))),
+    get: (url: string) => results.get(url),
+    onResult: (cb: (url: string, r: Icon) => void) => { listeners.add(cb); return () => { listeners.delete(cb); }; },
+    dispose: vi.fn(),
+    finish(url: string, r: Icon) { results.set(url, r); for (const cb of [...listeners]) cb(url, r); },
+  };
+  return a;
+}
+const DATA = 'data:image/png;base64,AAAA';
+const darkIcon: Icon = { verdict: 'dark-icon', animated: false, inverted: DATA };
+const abs = (u: string) => new URL(u, document.baseURI).href;
+const imagesDeps = (...fakes: ReturnType<typeof fakeAnalyzer>[]) => {
+  let i = 0;
+  return { fetchCss: vi.fn(), images: () => fakes[Math.min(i++, fakes.length - 1)] as never };
+};
+
+test('1.5b: list-style-image → request; зеркало только после dark-icon и одного кадра', async () => {
+  const a = fakeAnalyzer();
+  const s = style('li{list-style-image:url(a.gif)}');
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
+  expect(a.request).toHaveBeenCalledWith(abs('a.gif'));
+  expect(s.nextElementSibling?.getAttribute('data-darkext')).not.toBe('mirror');
+  a.finish(abs('a.gif'), darkIcon);
+  expect(s.nextElementSibling?.getAttribute('data-darkext')).not.toBe('mirror'); // coalesced into the frame
+  await frame();
+  expect(s.nextElementSibling?.getAttribute('data-darkext')).toBe('mirror');
+  expect(s.nextElementSibling!.textContent).toContain(`list-style-image:url("${DATA}")`);
+});
+
+test('1.5b: вердикт other → зеркала нет, перестройки нет', async () => {
+  const a = fakeAnalyzer();
+  const s = style('li{list-style-image:url(a.gif)}');
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
+  const before = calls.countVarUsage;
+  a.finish(abs('a.gif'), { verdict: 'other', animated: false });
+  await frame();
+  expect(s.nextElementSibling?.getAttribute('data-darkext')).not.toBe('mirror');
+  expect(calls.countVarUsage).toBe(before);
+});
+
+test('1.5b: перестройка по результату не пересчитывает переменные', async () => {
+  const a = fakeAnalyzer();
+  const s = style('li{list-style-image:url(a.gif);background-color:#fff}');
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
+  expect(s.nextElementSibling!.textContent).not.toContain('data:');
+  const before = calls.countVarUsage;
+  a.finish(abs('a.gif'), darkIcon);
+  await frame();
+  expect(s.nextElementSibling!.textContent).toContain(`list-style-image:url("${DATA}")`);
+  expect(calls.countVarUsage).toBe(before);
+});
+
+test('1.5b: результат после detach() ничего не пишет; detach вызывает dispose', async () => {
+  const a = fakeAnalyzer();
+  style('li{list-style-image:url(a.gif)}');
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
+  p.detach();
+  expect(a.dispose).toHaveBeenCalledTimes(1);
+  a.finish(abs('a.gif'), darkIcon);
+  await frame();
+  expect(document.querySelectorAll('[data-darkext]').length).toBe(0);
+});
+
+test('1.5b: start() после detach() создаёт новый анализатор и снова запрашивает', async () => {
+  const a = fakeAnalyzer(), b = fakeAnalyzer();
+  const s = style('li{list-style-image:url(a.gif)}');
+  const p = createPipeline(document, imagesDeps(a, b)); p.start(cfg());
+  p.detach(); p.start(cfg());
+  expect(b.request).toHaveBeenCalledWith(abs('a.gif'));
+  b.finish(abs('a.gif'), darkIcon);
+  await frame();
+  expect(s.nextElementSibling!.textContent).toContain(`list-style-image:url("${DATA}")`);
+});
+
+test('1.5b: 20 одинаковых URL в разных листах → один request', () => {
+  const a = fakeAnalyzer();
+  for (let i = 0; i < 20; i++) style(`.i${i}{background-image:url(a.gif)}`);
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
+  expect(a.request).toHaveBeenCalledTimes(1);
+});
+
+test('1.5b: update перестраивает с известными вердиктами без новых запросов', async () => {
+  const a = fakeAnalyzer();
+  const s = style('li{list-style-image:url(a.gif)}');
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
+  a.finish(abs('a.gif'), darkIcon);
+  await frame();
+  p.update({ ...cfg(), colors: PRESETS.find(x => x.id === 'oled')!.colors });
+  await settle();
+  expect(s.nextElementSibling!.textContent).toContain(`list-style-image:url("${DATA}")`);
+  expect(a.request).toHaveBeenCalledTimes(1);
+});
+
+test('1.5b: новый лист после старта — его URL запрашивается и подменяется', async () => {
+  const a = fakeAnalyzer();
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
+  const s = style('.n{background-image:url(b.png)}');
+  await frame();
+  expect(a.request).toHaveBeenCalledWith(abs('b.png'));
+  a.finish(abs('b.png'), darkIcon);
+  await frame();
+  expect(s.nextElementSibling!.textContent).toContain(`background-image:url("${DATA}")`);
+});
+
+test('1.5b: ошибка анализатора не меняет статус конвейера', async () => {
+  const onStatus = vi.fn();
+  const rejecting = fakeAnalyzer({ request: async () => { throw new Error('nope'); } });
+  style('li{list-style-image:url(a.gif)}');
+  const p = createPipeline(document, imagesDeps(rejecting)); p.onStatus(onStatus); p.start(cfg());
+  await settle();
+  expect(p.status()).toBe('ok');
+  const throwing = fakeAnalyzer({ request: () => { throw new Error('sync'); } });
+  const q = createPipeline(document, imagesDeps(throwing)); q.onStatus(onStatus); q.start(cfg());
+  await settle();
+  expect(q.status()).toBe('ok');
+  expect(onStatus).not.toHaveBeenCalled();
+  expect(document.querySelectorAll('[data-darkext=mirror]').length).toBeGreaterThan(0);
+});
+
+test('1.5b: без images поведение прежнее (зеркала без подмены)', () => {
+  const s = style('li{list-style-image:url(a.gif);background-color:#fff}');
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  expect(s.nextElementSibling!.textContent).not.toContain('list-style-image');
+});

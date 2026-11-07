@@ -32,5 +32,10 @@ export function createMessenger(deps: MessengerDeps) {
     if ('error' in res) throw new Error(res.error);
     return res.text;
   }
-  return { send, fetchCss };
+  async function fetchImage(url: string): Promise<{ dataUrl: string; animated: boolean }> {
+    const res = await send({ type: 'FETCH_IMAGE', url });
+    if ('error' in res) throw new Error(res.error);
+    return { dataUrl: res.dataUrl, animated: res.animated };
+  }
+  return { send, fetchCss, fetchImage };
 }

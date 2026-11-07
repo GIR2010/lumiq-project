@@ -4,6 +4,7 @@ import { sendToBackground, type ContentMessage } from '../shared/messages';
 import { createController } from './controller';
 import { readSchemeSignals, sampleBackgrounds } from './detector';
 import { createMessenger, isInvalidated } from './messaging';
+import { browserImageDeps, ImageAnalyzer } from './pipeline/images';
 import { createPipeline } from './pipeline/pipeline';
 
 
@@ -22,7 +23,10 @@ function die(): void {
 const messenger = createMessenger({ sendMessage: sendToBackground, wait: (ms) => new Promise((r) => setTimeout(r, ms)), onInvalidated: die });
 const { send } = messenger;
 
-const pipeline = createPipeline(document, { fetchCss: messenger.fetchCss });
+const pipeline = createPipeline(document, {
+  fetchCss: messenger.fetchCss,
+  images: () => new ImageAnalyzer(browserImageDeps(messenger.fetchImage)),
+});
 
 const mql = window.matchMedia('(prefers-color-scheme: dark)');
 controller = createController(document, {
