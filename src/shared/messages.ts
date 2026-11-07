@@ -21,6 +21,7 @@ export type ResponseOf<R extends Request> =
   R extends { type: 'GET_CONFIG' } ? EffectiveConfig | null
   : R extends { type: 'FETCH_CSS' } ? { text: string } | { error: string }
   : R extends { type: 'GET_TAB_STATE' } ? PopupState
+  : R extends { type: 'UPDATE_GLOBAL' | 'UPDATE_SITE' } ? void | { error: string } // error: invalid patch, nothing changed
   : void;
 
 export function sendToBackground<R extends Request>(msg: R): Promise<ResponseOf<R>> {

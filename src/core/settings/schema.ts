@@ -44,3 +44,16 @@ export const UserStyleSchema = z.object({
   name: z.string(),
   c: StyleColorsSchema,
 });
+
+/** UPDATE_GLOBAL patch: any subset of the fields; `adj` may be partial (merged into the current one). */
+export const GlobalPatchSchema = GlobalSettingsSchema.extend({ adj: AdjustmentsSchema.partial() }).partial().strict();
+
+/** UPDATE_SITE patch: any subset of the fields, each a value or null (= remove). */
+export const SitePatchSchema = z.object({
+  on: z.boolean().nullable(),
+  eng: EngineSchema.nullable(),
+  st: z.string().nullable(),
+  adj: AdjustmentsSchema.partial().nullable(),
+  det: z.literal(true).nullable(),
+  r: z.array(OverrideRuleSchema).nullable(),
+}).partial().strict();

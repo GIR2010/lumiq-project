@@ -1,4 +1,5 @@
 import { resolveConfig, siteKey, type EffectiveConfig } from '../core/settings/resolve';
+import { GlobalPatchSchema, SitePatchSchema } from '../core/settings/schema';
 import type { ContentMessage, PopupState, Request, TabState } from '../shared/messages';
 import { setBadge } from './badge';
 import { fetchCss } from './css-fetch';
@@ -13,6 +14,13 @@ function configFor(store: SettingsStore, url: string | undefined): EffectiveConf
   if (!host) return null;
   const { g, sites, styles } = store.snapshot();
   return resolveConfig(host, g, sites[host], styles);
+}
+
+const INVALID = { error: 'invalid patch' } as const;
+
+function invalid(what: string, detail: unknown): typeof INVALID {
+  console.warn(`[DarkExt] ${what} rejected`, detail);
+  return INVALID;
 }
 
 export function createRouter(store: SettingsStore, tabs: TabStateStore, sent?: SentConfigs) {
@@ -43,12 +51,22 @@ export function createRouter(store: SettingsStore, tabs: TabStateStore, sent?: S
         const popup: PopupState = { host, state, snapshot: store.snapshot() };
         return popup;
       }
-      case 'UPDATE_GLOBAL':
+      // Patches are validated before they reach the store; an invalid one changes nothing.
+      case 'UPDATE_GLOBAL': {
+        const p = GlobalPatchSchema.safeParse(msg.patch);
+        if (!p.success) return invalid('UPDATE_GLOBAL patch', p.error.issues);
         store.updateGlobal(msg.patch);
         return;
-      case 'UPDATE_SITE':
+      }
+      case 'UPDATE_SITE': {
+        if (typeof msg.host !== 'string' || siteKey('https://' + msg.host) !== msg.host) return invalid('UPDATE_SITE host', msg.host);
+        if (msg.patch !== null) {
+          const p = SitePatchSchema.safeParse(msg.patch);
+          if (!p.success) return invalid('UPDATE_SITE patch', p.error.issues);
+        }
         store.updateSite(msg.host, msg.patch);
         return;
+      }
     }
   };
 }

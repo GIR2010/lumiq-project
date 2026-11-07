@@ -130,3 +130,34 @@ describe('I2: дедупликация CONFIG_CHANGED по вкладкам', ()
     expect(fake.tabs.sendMessage).toHaveBeenCalledTimes(2);
   });
 });
+
+test('M9: невалидные патчи UPDATE_GLOBAL / UPDATE_SITE → warn и { error }, хранилище не меняется', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const store = new SettingsStore(); await store.ready; const r = createRouter(store, new TabStateStore());
+  const before = structuredClone(store.snapshot());
+  const bad = [
+    { type: 'UPDATE_GLOBAL', patch: { def: 'maybe' } },
+    { type: 'UPDATE_GLOBAL', patch: { adj: { br: 999 } } },
+    { type: 'UPDATE_GLOBAL', patch: { evil: 1 } },
+    { type: 'UPDATE_GLOBAL', patch: null },
+    { type: 'UPDATE_SITE', host: 'a.com', patch: { on: 'yes' } },
+    { type: 'UPDATE_SITE', host: 'a.com', patch: { adj: { gs: -5 } } },
+    { type: 'UPDATE_SITE', host: 'a.com', patch: { extra: true } },
+    { type: 'UPDATE_SITE', host: 'bad/host', patch: { on: true } },
+    { type: 'UPDATE_SITE', host: 'www.a.com', patch: { on: true } },
+  ];
+  for (const m of bad) expect(await r(m as never, sender('https://a.com'))).toEqual({ error: 'invalid patch' });
+  expect(store.snapshot()).toEqual(before);
+  expect(warn).toHaveBeenCalledTimes(bad.length);
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('[DarkExt]'), expect.anything());
+  // Valid partial patches still apply.
+  await r({ type: 'UPDATE_GLOBAL', patch: { adj: { br: 90 } as never } }, sender('https://a.com'));
+  expect(store.snapshot().g.adj.br).toBe(90);
+  await r({ type: 'UPDATE_SITE', host: 'a.com', patch: { adj: { ct: 80 }, st: 'oled' } }, sender('https://a.com'));
+  await r({ type: 'UPDATE_SITE', host: 'a.com', patch: { st: null, adj: null } }, sender('https://a.com'));
+  expect(store.snapshot().sites['a.com']).toBeUndefined();
+  await r({ type: 'UPDATE_SITE', host: 'a.com', patch: { on: false } }, sender('https://a.com'));
+  await r({ type: 'UPDATE_SITE', host: 'a.com', patch: null }, sender('https://a.com'));
+  expect(store.snapshot().sites['a.com']).toBeUndefined();
+  warn.mockRestore();
+});

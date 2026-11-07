@@ -94,6 +94,7 @@ export function installFakeChrome() {
     action: {
       setBadgeText: vi.fn(async (_d: unknown) => undefined),
       setBadgeBackgroundColor: vi.fn(async (_d: unknown) => undefined),
+      getBadgeBackgroundColor: vi.fn(async (_d: unknown) => [95, 99, 104, 255]),
     },
     commands: { onCommand: makeEvent<(...a: any[]) => void>() },
     i18n: { getMessage: vi.fn((key: string) => key) },
