@@ -289,3 +289,43 @@ test('a hidden ::-webkit-scrollbar row gets no scrollbar height with the theme o
   await expect.poll(() => bodyBg(page)).toBeLessThan(DARK);
   expect(await page.locator('#row').evaluate((el) => (el as HTMLElement).offsetHeight - el.clientHeight)).toBe(0);
 });
+
+// --- stage 1.5b: dark icon images ---
+
+const cssOf = (page: Page, sel: string, prop: 'backgroundImage' | 'listStyleImage') =>
+  page.locator(sel).evaluate((el, p) => getComputedStyle(el)[p], prop);
+const iconMark = (page: Page, sel: string) => page.locator(sel).getAttribute('data-darkext-icon');
+
+test('dark icon images: CSS sprite and list marker get inverted copies, dark <img> are marked', async ({ context }) => {
+  const page = await open(context, 'icons.html');
+  await expect.poll(() => cssOf(page, '#ic', 'backgroundImage')).toContain('data:image/png');
+  await expect.poll(() => cssOf(page, '#arrows', 'listStyleImage')).toContain('data:');
+  await expect.poll(() => iconMark(page, '#text')).not.toBeNull();
+  // Review focus #1: an SVG without width/height and a currentColor (black) glyph.
+  await expect.poll(() => iconMark(page, '#nosize')).not.toBeNull();
+});
+
+test('light coloured logo, photo and animated GIF are left as they are', async ({ context }) => {
+  const page = await open(context, 'icons.html');
+  // Positive control: analysis has run on the page.
+  await expect.poll(() => cssOf(page, '#ic', 'backgroundImage')).toContain('data:image/png');
+  await expect.poll(() => iconMark(page, '#nosize')).not.toBeNull();
+  // Every image is requested at once (≤ 4 at a time): give the rest time to finish.
+  await page.waitForTimeout(1500);
+  expect(await iconMark(page, '#logo')).toBeNull();
+  expect(await iconMark(page, '#photo-img')).toBeNull();
+  expect(await cssOf(page, '#photo', 'backgroundImage')).toMatch(/^url\("http:[^"]*photo\.png"\)$/);
+  expect(await cssOf(page, '#anim', 'backgroundImage')).toMatch(/^url\("http:[^"]*anim\.gif"\)$/);
+  // The same animated GIF is a dark icon: as an <img> it gets the filter, only the CSS swap is skipped.
+  await expect.poll(() => iconMark(page, '#anim-img')).not.toBeNull();
+});
+
+test('turning the site off removes icon marks and inverted copies', async ({ context, setSettings }) => {
+  const page = await open(context, 'icons.html');
+  await expect.poll(() => cssOf(page, '#ic', 'backgroundImage')).toContain('data:image/png');
+  await expect.poll(() => iconMark(page, '#text')).not.toBeNull();
+
+  await setSettings({ [SITE]: { on: false } });
+  await expect(page.locator('[data-darkext-icon]')).toHaveCount(0);
+  expect(await cssOf(page, '#ic', 'backgroundImage')).toMatch(/^url\("http:[^"]*dark-glyph\.png"\)$/);
+});

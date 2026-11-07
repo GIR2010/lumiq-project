@@ -2,6 +2,7 @@ import { createServer, type Server } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { iconImages } from './images';
 
 /** Fixture pages are served from 4801; 4802 is a second origin (the source of remote.css). */
 export const PORTS = [4801, 4802] as const;
@@ -14,12 +15,21 @@ const TYPES: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',
 };
 
+/** Images generated in code, served next to the fixture pages. */
+const GENERATED = iconImages();
+
 function serve(port: number): Promise<Server> {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
     const path = decodeURIComponent(url.pathname);
     // `?delay=<ms>` (default 500) holds the response back: a slow server or CDN.
     const delay = url.searchParams.has('delay') ? Number(url.searchParams.get('delay')) || 500 : 0;
+    const generated = GENERATED[path];
+    if (generated) {
+      res.writeHead(200, { 'content-type': generated[0], 'cache-control': 'no-store' });
+      res.end(generated[1]);
+      return;
+    }
     const file = resolve(FIXTURES, '.' + path);
     if (!file.startsWith(FIXTURES + sep)) {
       res.writeHead(403).end();

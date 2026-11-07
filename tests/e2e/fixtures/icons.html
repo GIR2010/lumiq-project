@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Icon images</title>
+<style>
+  body { margin: 0; background: #fff; color: #000; }
+  .ic { display: inline-block; width: 16px; height: 16px; background: url(dark-glyph.png) -16px 0 no-repeat; }
+  ul.arrows { list-style-image: url(dark-arrow.gif); }
+  .photo { width: 64px; height: 48px; background-image: url(photo.png); }
+  .anim { width: 16px; height: 16px; background-image: url(anim.gif); }
+</style></head>
+<body>
+  <div class="ic" id="ic"></div>
+  <ul class="arrows" id="arrows"><li>One</li><li>Two</li></ul>
+  <img id="text" src="dark-text.svg" width="120" height="18" alt="">
+  <img id="logo" src="color-logo.png" width="120" height="18" alt="">
+  <!-- The file has no width/height (decodes at a default size); the page sizes it like a real icon. -->
+  <img id="nosize" src="icon-nosize.svg" style="width: 24px; height: 24px" alt="">
+  <img id="photo-img" src="photo.png" width="64" height="48" alt="">
+  <div class="photo" id="photo"></div>
+  <div class="anim" id="anim"></div>
+  <img id="anim-img" src="anim.gif" width="16" height="16" alt="">
+</body></html>
