@@ -50,3 +50,11 @@ test('вложенный фолбэк: var(--x, rgb(0 0 0/var(--a)))', () =>
 test('box-shadow с несколькими такими цветами', () =>
   expect(mapDeclarationValue('box-shadow', '0 0 0 1px rgb(0 0 0/var(--a)), 0 1px rgb(0 0 0/var(--b))', fn, ctx))
     .toBe('0 0 0 1px rgb(17 17 17 / var(--a)), 0 1px rgb(17 17 17 / var(--b))'));
+test.each([
+  ['color', 'rgb(255, 0, var(--b))'], ['color', 'hsl(0, 0%, var(--l))'], ['color', 'rgb(1 2 / var(--a))'],
+])('меньше трёх литеральных каналов → null: %s %s', (p, v) => expect(mapDeclarationValue(p, v, fn, ctx)).toBeNull());
+test.each([
+  ['color', 'RGB(1 2 3/var(--a))', 'rgb(238 238 238 / var(--a))'],
+  ['color', 'rgb( 1 2 3 / var(--a) )', 'rgb(238 238 238 / var(--a))'],
+  ['color', 'rgb(1 2 3 / var(--a, .5))', 'rgb(238 238 238 / var(--a, .5))'],
+])('%s: %s → %s', (p, v, out) => expect(mapDeclarationValue(p, v, fn, ctx)).toBe(out));

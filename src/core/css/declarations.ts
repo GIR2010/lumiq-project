@@ -79,6 +79,8 @@ function splitVarAlpha(inner: string): { channels: string; sep: 'slash' | 'comma
   if (!sep) return null;
   const channels = head.slice(0, -1).trim();
   if (!channels || /[()"'\/]/.test(channels)) return null;
+  const count = channels.split(sep === 'comma' ? /\s*,\s*/ : /\s+/).filter(Boolean).length;
+  if (count !== 3 || (sep === 'comma' && channels.split(',').length !== 3)) return null;
   return { channels, sep, alpha: inner.slice(v, end + 1) };
 }
 
@@ -116,10 +118,9 @@ function mapTokens(value: string, role: Role, fn: ColorFn, ctx: RuleContext): Ma
       pos = end;
       continue;
     }
-    const fnRe = new RegExp(COLOR_FN_START.source, 'gi');
-    fnRe.lastIndex = pos;
-    const cf = varIdx >= 0 ? fnRe.exec(value) : null;
-    if (cf && cf.index < varIdx && (!m || cf.index <= m.index)) {
+    COLOR_FN_START.lastIndex = pos;
+    const cf = varIdx >= 0 ? COLOR_FN_START.exec(value.slice(0, varIdx)) : null;
+    if (cf && (!m || cf.index <= m.index)) {
       const open = cf.index + cf[0].length - 1;
       const close = closingParen(value, open);
       const mapped = close > 0 ? mapVarAlphaColor(cf[1], value.slice(open + 1, close), role, fn, ctx) : null;
