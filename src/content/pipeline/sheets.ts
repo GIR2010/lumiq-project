@@ -54,16 +54,18 @@ export function ruleHeader(rule: CSSRule): string {
   return t.slice(0, t.indexOf('{')).trim();
 }
 
-export function countVarUsage(rules: CSSRuleList, counter: VarRoleCounter): void {
+/** Counts `var()` usages by role; custom properties the rules define are added to `defs`. */
+export function countVarUsage(rules: CSSRuleList, counter: VarRoleCounter, defs?: Set<string>): void {
   for (const rule of Array.from(rules)) {
     if (isStyleRule(rule)) {
       const st = rule.style;
       for (let i = 0; i < st.length; i++) {
         const prop = st.item(i);
+        if (defs && prop.startsWith('--')) defs.add(prop);
         collectVarUsage(prop, st.getPropertyValue(prop), counter);
       }
     } else if (isGroupingRule(rule)) {
-      countVarUsage(rule.cssRules, counter);
+      countVarUsage(rule.cssRules, counter, defs);
     }
   }
 }

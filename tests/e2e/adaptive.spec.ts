@@ -126,3 +126,11 @@ test('placeholder registration follows per-site settings of an IP host', async (
   const on = await open(context, 'light.html', 'domcontentloaded');
   expect(await placeholderSeen(on)).toBe(true);
 });
+
+// --- final review fixes ---
+
+test('custom properties defined in an earlier (cross-origin) sheet than the one using them', async ({ context, bodyBg }) => {
+  const page = await open(context, 'vars-split.html');
+  await expect.poll(() => bodyBg(page)).toBeLessThan(DARK);
+  await expect.poll(() => textL(page.locator('#text'))).toBeGreaterThan(LIGHT_TEXT);
+});

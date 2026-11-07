@@ -292,3 +292,41 @@ test('detach идемпотентен', () => {
   p.detach(); p.detach();
   expect(document.querySelectorAll('[data-darkext]').length).toBe(0);
 });
+
+// --- final review fixes ---
+
+const mirrorOf = (el: Element) => el.nextElementSibling?.getAttribute('data-darkext') === 'mirror' ? el.nextElementSibling! : null;
+const varIn = (el: Element, name: string) => parseColor(new RegExp(`${name}:([^;]+);`).exec(mirrorOf(el)?.textContent ?? '')![1])!;
+const style = (css: string, parent: Element | ShadowRoot = document.head) => {
+  const s = document.createElement('style'); s.textContent = css; parent.append(s); return s;
+};
+
+test('C1: переменные из листа, загруженного раньше листа-пользователя, получают роль по использованию', async () => {
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  const tokens = style(':root{--fg:#101114;--bg:#ffffff}');
+  style('body{color:var(--fg);background-color:var(--bg)}');
+  await frame();
+  expect(varIn(tokens, '--fg').l).toBeGreaterThan(0.75); // text: light
+  expect(varIn(tokens, '--bg').l).toBeLessThan(0.3);
+});
+
+test('C1: удаление листа-пользователя возвращает роль по умолчанию и перестраивает лист с определением', async () => {
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  const tokens = style(':root{--fg:#101114}');
+  const usage = style('body{color:var(--fg)}');
+  await frame();
+  expect(varIn(tokens, '--fg').l).toBeGreaterThan(0.75);
+  usage.remove();
+  await frame();
+  expect(varIn(tokens, '--fg').l).toBeLessThan(0.3); // bg again
+});
+
+test('C1: кросс-доменный лист с переменными, пришедший до листа-пользователя', async () => {
+  const link = crossOriginLink('https://cdn.example/tokens.css');
+  const p = createPipeline(document, { fetchCss: vi.fn(async () => ':root{--fg:#111111}') }); p.start(cfg());
+  await settle();
+  expect(varIn(link, '--fg').l).toBeLessThan(0.3);
+  style('p{color:var(--fg)}');
+  await frame();
+  expect(varIn(link, '--fg').l).toBeGreaterThan(0.75);
+});

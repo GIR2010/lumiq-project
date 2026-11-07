@@ -16,14 +16,17 @@ const TYPES: Record<string, string> = {
 
 function serve(port: number): Promise<Server> {
   const server = createServer((req, res) => {
-    const path = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
+    const url = new URL(req.url ?? '/', 'http://x');
+    const path = decodeURIComponent(url.pathname);
+    // `?delay=<ms>` (default 500) holds the response back: a slow server or CDN.
+    const delay = url.searchParams.has('delay') ? Number(url.searchParams.get('delay')) || 500 : 0;
     const file = resolve(FIXTURES, '.' + path);
     if (!file.startsWith(FIXTURES + sep)) {
       res.writeHead(403).end();
       return;
     }
-    readFile(file).then(
-      (body) => {
+    Promise.all([readFile(file), new Promise((r) => setTimeout(r, delay))]).then(
+      ([body]) => {
         // No CORS headers: the second origin's sheet stays unreadable from the page (cross-origin).
         res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-store' });
         res.end(body);

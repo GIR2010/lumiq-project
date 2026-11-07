@@ -5,6 +5,8 @@ export interface ObserverHandlers {
   isOwn(r: MutationRecord): boolean;
   /** Document roots only: children of <html>/<head> changed (e.g. <head> appeared, a node went before base). */
   onHeadChange?(): void;
+  /** Called after each batch has been delivered. */
+  onFlushed?(): void;
 }
 
 /** Attributes that change which sheet a <link>/<style> provides, or how it applies. */
@@ -24,7 +26,8 @@ export function isSheetNode(el: Element): el is HTMLStyleElement | HTMLLinkEleme
 
 const isStyleOrLink = (el: Element) => el.localName === 'style' || el.localName === 'link';
 
-function scheduleFrame(cb: () => void): () => void {
+/** Runs `cb` on the next animation frame (a timer where there are no frames); returns a cancel function. */
+export function scheduleFrame(cb: () => void): () => void {
   if (typeof requestAnimationFrame === 'function') {
     const id = requestAnimationFrame(() => cb());
     return () => cancelAnimationFrame(id);
@@ -68,6 +71,7 @@ export function observeRoot(root: Document | ShadowRoot, h: ObserverHandlers): (
     for (const el of sh) if (el.isConnected) h.onSheetNode(el);
     for (const el of st) if (el.isConnected) h.onStyleAttr(el);
     if (head) h.onHeadChange?.();
+    h.onFlushed?.();
   };
 
   const collect = (records: MutationRecord[]) => {

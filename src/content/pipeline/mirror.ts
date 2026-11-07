@@ -1,10 +1,10 @@
 import { parseColor } from '../../core/color';
 import { isLinkSelector, mapDeclarationValue, mapValueWithRole } from '../../core/css/declarations';
-import type { VarRoleCounter } from '../../core/css/vars';
+import type { VarRoles } from '../../core/css/vars';
 import type { ColorFn, RuleContext } from '../../core/mapping/types';
 import { isGroupingRule, isStyleRule, ruleHeader } from './sheets';
 
-function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoleCounter): string {
+function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoles): string {
   const st = rule.style;
   const selector = rule.selectorText;
   const bg = st.getPropertyValue('background-color');
@@ -24,7 +24,7 @@ function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoleCounter): st
   return body ? `${selector}{${body}}` : '';
 }
 
-export function buildMirrorCss(rules: CSSRuleList, fn: ColorFn, vars: VarRoleCounter): string {
+export function buildMirrorCss(rules: CSSRuleList, fn: ColorFn, vars: VarRoles): string {
   let out = '';
   for (const rule of Array.from(rules)) {
     if (isStyleRule(rule)) {

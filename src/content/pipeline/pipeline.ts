@@ -1,12 +1,12 @@
 import { buildBaseCss } from '../../core/css/base';
-import { VarRoleCounter } from '../../core/css/vars';
+import { VarRoleCounter, VarRoleTable } from '../../core/css/vars';
 import { createAdaptiveMapper } from '../../core/mapping/adaptive';
 import { createColorFn } from '../../core/mapping/color-fn';
 import type { ColorFn, ColorMapper } from '../../core/mapping/types';
 import type { EffectiveConfig } from '../../core/settings/resolve';
 import { InlineStyler } from './inline';
 import { buildMirrorCss } from './mirror';
-import { isOwnNode, isStylesheetLink, observeRoot, type ObserverHandlers } from './observer';
+import { isOwnNode, isStylesheetLink, observeRoot, scheduleFrame, type ObserverHandlers } from './observer';
 import { runChunked } from './scheduler';
 import { countVarUsage, extractImports, parseCssText, readRules } from './sheets';
 import { StyleWriter } from './writer';
@@ -69,12 +69,17 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   const statusListeners: Array<(s: PipelineStatus) => void> = [];
   /** Sources that currently have a mirror. Once the budget is spent only these are rebuilt. */
   const mirrored = new Set<Source>();
+  /** Variable roles from per-source usage counts, and the variables each source defines. */
+  const vars = new VarRoleTable();
+  const varDefs = new Map<Source, Set<string>>();
+  /** Mirrored sources whose variables changed role: rebuilt once, at the end of the frame. */
+  const pendingRebuild = new Set<Source>();
+  let cancelFrame: (() => void) | null = null;
   const now = deps.now ?? (() => performance.now());
 
   let running = false;
   let disabled = false;
   let fn: ColorFn | null = null;
-  let vars = new VarRoleCounter();
   let current: PipelineStatus = 'ok';
   /** Bumped by start/detach: async work from an older session is dropped. */
   let session = 0;
@@ -140,9 +145,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     }
   }
 
-  function countRules(rules: CSSRuleList, depth = 0): void {
-    forEachImport(rules, depth, (r) => countRules(r, depth + 1));
-    countVarUsage(rules, vars);
+  function countRules(rules: CSSRuleList, counts: VarRoleCounter, defs: Set<string>, depth = 0): void {
+    forEachImport(rules, depth, (r) => countRules(r, counts, defs, depth + 1));
+    countVarUsage(rules, counts, defs);
   }
 
   function mirrorCss(rules: CSSRuleList, colorFn: ColorFn, depth = 0): string {
@@ -154,9 +159,45 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     return css + buildMirrorCss(rules, colorFn, vars);
   }
 
-  function count(item: Item): void {
+  /** Replaces the source's variable counts; returns the variables whose role changed. */
+  function count(item: Item): Set<string> {
     const rules = rulesOf(item);
-    if (rules) countRules(rules);
+    const counts = new VarRoleCounter();
+    const defs = new Set<string>();
+    if (rules) countRules(rules, counts, defs);
+    varDefs.set(item.source, defs);
+    return vars.set(item.source, counts);
+  }
+
+  /** Mirrored sources defining a variable whose role changed are rebuilt at the end of the frame. */
+  function rebuildDefiners(names: Set<string>, except?: ReadonlySet<Source>): void {
+    if (!names.size) return;
+    for (const [source, defs] of varDefs) {
+      if (except?.has(source) || !mirrored.has(source)) continue;
+      for (const n of names) {
+        if (defs.has(n)) { pendingRebuild.add(source); break; }
+      }
+    }
+    if (pendingRebuild.size) requestFrame();
+  }
+
+  function flushRebuilds(): void {
+    const list = [...pendingRebuild];
+    pendingRebuild.clear();
+    for (const source of list) {
+      const entry = entries.get(source);
+      if (running && entry && mirrored.has(source)) build({ source, entry });
+    }
+  }
+
+  function requestFrame(): void {
+    if (!cancelFrame) cancelFrame = scheduleFrame(() => guard(flushFrame));
+  }
+
+  function flushFrame(): void {
+    cancelFrame = null;
+    if (!running) return;
+    flushRebuilds();
   }
 
   function unmirror(source: Source): void {
@@ -166,6 +207,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
 
   function forget(source: Source): void {
     entries.delete(source);
+    varDefs.delete(source);
+    pendingRebuild.delete(source);
+    rebuildDefiners(vars.delete(source));
     unmirror(source);
   }
 
@@ -197,8 +241,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   function processNow(item: Item | null): void {
     if (!item || blocked(item.source)) return;
     charge(() => {
-      count(item);
+      const changed = count(item);
       build(item);
+      rebuildDefiners(changed, new Set([item.source]));
     });
   }
 
@@ -379,6 +424,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       }),
       onStyleAttr: (el) => guard(() => { if (running) applyInline([el]); }),
       onHeadChange: () => guard(() => { if (running) writer.ensureBaseFirst(); }),
+      onFlushed: () => guard(() => { if (running) flushRebuilds(); }),
       isOwn: (r) => inline.isOwnMutation(r),
     };
   }
@@ -391,8 +437,10 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   function attachRoot(root: ShadowRoot): void {
     pruneAdopted(root);
     const items = resolveAll(root);
-    charge(() => items.forEach(count));
+    const changed = new Set<string>();
+    charge(() => items.forEach((i) => count(i).forEach((n) => changed.add(n))));
     for (const item of items) charge(() => build(item));
+    rebuildDefiners(changed, new Set(items.map((i) => i.source)));
     applyInline(styledIn(root));
     observe(root);
   }
@@ -412,7 +460,6 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       session++;
       spentMs = 0;
       fn = makeColorFn(cfg);
-      vars = new VarRoleCounter();
       writer.setBase(buildBaseCss(cfg.colors, fn, cfg.adj));
       let items: Item[] = [];
       charge(() => {
@@ -437,9 +484,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       const t0 = now();
       setStatus(exhausted() ? 'heavy' : 'ok'); // same session: the budget already spent still counts
       fn = makeColorFn(cfg);
-      vars = new VarRoleCounter();
+      // Variable counts are kept per source and are independent of the config: no recount.
+      pendingRebuild.clear();
       const items = [...entries].map(([source, entry]) => ({ source, entry }));
-      charge(() => items.forEach(count), t0);
       writer.setBase(buildBaseCss(cfg.colors, fn, cfg.adj));
       inline.restoreAll(); // apply() skips elements it already styled; start again from the originals
       schedule(items, allStyled(), t0);
@@ -460,6 +507,11 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     safe(() => writer.clear());
     entries.clear();
     mirrored.clear();
+    vars.clear();
+    varDefs.clear();
+    pendingRebuild.clear();
+    cancelFrame?.();
+    cancelFrame = null;
   }
 
   function setDisabled(d: boolean): void {
