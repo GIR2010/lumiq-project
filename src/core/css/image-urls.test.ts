@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { IMAGE_PROPS, replaceImageUrl, singleImageUrl } from './image-urls';
+import { absolutizeUrls, IMAGE_PROPS, replaceImageUrl, singleImageUrl } from './image-urls';
 
 describe('singleImageUrl', () => {
   it('IMAGE_PROPS', () => {
@@ -70,4 +70,22 @@ describe('replaceImageUrl', () => {
     expect(replaceImageUrl('url(a.png)', 'a.png', 'a"b\\c')).toBe('url("a\\"b\\\\c")'));
   it('заменяет только совпадающий url', () =>
     expect(replaceImageUrl('url(a.png), url(b.png)', 'b.png', 'x')).toBe('url(a.png), url("x")'));
+});
+
+describe('absolutizeUrls', () => {
+  const B = 'https://cdn.example/css/a.css';
+  it('относительные, корневые и в кавычках → абсолютные', () =>
+    expect(absolutizeUrls(`.a{background:url(x.png)}.b{background:url("/y.svg")}.c{content:url('../z.gif')}`, B))
+      .toBe('.a{background:url("https://cdn.example/css/x.png")}.b{background:url("https://cdn.example/y.svg")}.c{content:url("https://cdn.example/z.gif")}'));
+  it('data:, #фрагмент, абсолютные — без изменений по смыслу', () => {
+    expect(absolutizeUrls('.a{filter:url(#f)}', B)).toBe('.a{filter:url(#f)}');
+    expect(absolutizeUrls('.a{background:url(data:image/png;base64,AA)}', B)).toBe('.a{background:url(data:image/png;base64,AA)}');
+  });
+  it('url( в строках и комментариях не трогается; ident-префикс не url', () => {
+    const css = '/* url(a.png) */.a{content:"url(b.png)"}.b{background:myurl(c.png)}';
+    expect(absolutizeUrls(css, B)).toBe(css);
+  });
+  it('экранирование кавычек и обратной косой', () =>
+    expect(absolutizeUrls('.a{background:url(a\\"b.png)}', B)).toBe('.a{background:url("https://cdn.example/css/a%22b.png")}'));
+  it('битый url( оставлен как есть', () => expect(absolutizeUrls('.a{background:url(a b)}', B)).toBe('.a{background:url(a b)}'));
 });

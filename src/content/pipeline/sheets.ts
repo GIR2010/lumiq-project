@@ -14,14 +14,20 @@ export function readRules(sheet: CSSStyleSheet): CSSRuleList | 'cross-origin' | 
 }
 
 /** Parses CSS text in a detached document, so the page is unaffected. */
-export function parseCssText(text: string): CSSRuleList {
+/** Parses detached CSS; `baseUrl` (the file's URL) is the base its relative URLs resolve against. */
+export function parseCssText(text: string, baseUrl?: string): CSSRuleList {
   const doc = document.implementation.createHTMLDocument('');
+  if (baseUrl) {
+    const base = doc.createElement('base');
+    base.href = baseUrl;
+    doc.head.appendChild(base);
+  }
   const style = doc.createElement('style');
   style.textContent = text;
   doc.head.appendChild(style);
   if (style.sheet) return style.sheet.cssRules;
   // Fallback for environments without a browsing context for detached documents (e.g. jsdom).
-  const sheet = new CSSStyleSheet();
+  const sheet = new CSSStyleSheet(baseUrl ? { baseURL: baseUrl } : undefined);
   sheet.replaceSync(text);
   return sheet.cssRules;
 }

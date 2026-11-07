@@ -1,4 +1,5 @@
 import { buildBaseCss, buildFallbackCss } from '../../core/css/base';
+import { absolutizeUrls } from '../../core/css/image-urls';
 import { VarRoleCounter, VarRoleTable, type VarLinks } from '../../core/css/vars';
 import { createAdaptiveMapper } from '../../core/mapping/adaptive';
 import { createColorFn } from '../../core/mapping/color-fn';
@@ -503,13 +504,16 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     return p;
   }
 
-  /** Fetched text with its @imports inlined in front (failed imports are skipped). */
+  /**
+   * Fetched text with its @imports inlined in front (failed imports are skipped). Each file's url()s
+   * are made absolute against its own URL first, since the joined text is parsed with one base.
+   */
   async function loadCss(url: string, seen: ReadonlySet<string>): Promise<string> {
     const raw = await fetchRaw(url);
     const next = new Set(seen).add(url);
     const imports = extractImports(raw, url).filter((u) => !next.has(u));
     const parts = await Promise.all(imports.map((u) => loadCss(u, next).catch(() => '')));
-    return [...parts, raw.replace(IMPORT_STATEMENT, '')].join('\n');
+    return [...parts, absolutizeUrls(raw.replace(IMPORT_STATEMENT, ''), url)].join('\n');
   }
 
   function loadCrossOrigin(source: Source, url: string, root: Root): void {
@@ -521,7 +525,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
           release(source); // gone or replaced meanwhile
           return;
         }
-        const entry: Entry = { root, parsed: parseCssText(text) };
+        const entry: Entry = { root, parsed: parseCssText(text, url) };
         entries.set(source, entry);
         processNow({ source, entry });
       }),

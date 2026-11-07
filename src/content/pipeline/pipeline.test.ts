@@ -765,12 +765,35 @@ test('1.5b: ошибка анализатора не меняет статус �
   const p = createPipeline(document, imagesDeps(rejecting)); p.onStatus(onStatus); p.start(cfg());
   await settle();
   expect(p.status()).toBe('ok');
+  p.detach(); // q's mirrors alone must show it built
+  expect(document.querySelectorAll('[data-darkext]').length).toBe(0);
   const throwing = fakeAnalyzer({ request: () => { throw new Error('sync'); } });
   const q = createPipeline(document, imagesDeps(throwing)); q.onStatus(onStatus); q.start(cfg());
   await settle();
   expect(q.status()).toBe('ok');
   expect(onStatus).not.toHaveBeenCalled();
   expect(document.querySelectorAll('[data-darkext=mirror]').length).toBeGreaterThan(0);
+});
+
+test('1.5b: кросс-доменный лист — относительные url() от адреса листа, @import из другой папки — от своего', async () => {
+  const files: Record<string, string> = {
+    'https://cdn.example/css/main.css': '@import url("../lib/icons.css");.x{background-image:url(s.png)}',
+    'https://cdn.example/lib/icons.css': '.y{list-style-image:url(img/i.gif)}',
+  };
+  const a = fakeAnalyzer();
+  const link = crossOriginLink('https://cdn.example/css/main.css');
+  const p = createPipeline(document, { fetchCss: vi.fn(async (u: string) => files[u]), images: () => a as never });
+  p.start(cfg());
+  await settle();
+  const urls = a.request.mock.calls.map(c => c[0]);
+  expect(urls).toContain('https://cdn.example/css/s.png');
+  expect(urls).toContain('https://cdn.example/lib/img/i.gif');
+  a.finish('https://cdn.example/css/s.png', darkIcon);
+  a.finish('https://cdn.example/lib/img/i.gif', darkIcon);
+  await frame();
+  const css = link.nextElementSibling!.textContent!;
+  expect(css).toContain(`background-image:url("${DATA}")`);
+  expect(css).toContain(`list-style-image:url("${DATA}")`);
 });
 
 test('1.5b: без images поведение прежнее (зеркала без подмены)', () => {

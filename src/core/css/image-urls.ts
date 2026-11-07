@@ -161,3 +161,42 @@ export function replaceImageUrl(value: string, from: string, to: string): string
   }
   return out + value.slice(last);
 }
+
+/**
+ * Rewrites every url() of a stylesheet text to an absolute, quoted URL resolved against `base`, so the
+ * text can be parsed (or concatenated with other files) without its own location. Comments and strings
+ * are skipped; fragment-only (`url(#id)`), `data:` and unresolvable or malformed url()s are kept as is.
+ */
+export function absolutizeUrls(css: string, base: string): string {
+  let out = '';
+  let last = 0;
+  let i = 0;
+  while (i < css.length) {
+    const c = css[i];
+    if (c === '/' && css[i + 1] === '*') {
+      const e = css.indexOf('*/', i + 2);
+      i = e < 0 ? css.length : e + 2;
+    } else if (c === '"' || c === "'") {
+      i++;
+      while (i < css.length && css[i] !== c && css[i] !== '\n') i += css[i] === BS ? 2 : 1;
+      i++;
+    } else if (c === BS) {
+      i += 2;
+    } else if ((c === 'u' || c === 'U') && css.slice(i, i + 4).toLowerCase() === 'url(' && !(i > 0 && isIdentChar(css[i - 1]))) {
+      const parsed = readUrlArg(css, i + 4);
+      if (!parsed) { i += 4; continue; }
+      const arg = parsed.arg.trim();
+      if (arg && !arg.startsWith('#') && !/^data:/i.test(arg)) {
+        try {
+          const abs = new URL(arg, base).href;
+          out += `${css.slice(last, i)}url("${abs.replace(/[\\"]/g, '\$&')}")`;
+          last = parsed.end;
+        } catch { /* unresolvable: keep */ }
+      }
+      i = parsed.end;
+    } else {
+      i++;
+    }
+  }
+  return out + css.slice(last);
+}
