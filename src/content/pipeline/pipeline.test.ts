@@ -630,3 +630,18 @@ test('1.5a: индекс масок заполнен (300 сигнатур) → 
   await frame();
   expect(refresh).not.toHaveBeenCalled();
 });
+
+test('1.5a: shadow root, подключённый позже, ищется по уже известным селекторам масок', async () => {
+  const { tokens } = maskPage();
+  document.querySelector('span.cdx-button__icon')!.remove(); // the icon lives only in the shadow root
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  await frame();
+  expect(varIn(tokens, '--c').l).toBeLessThan(0.4);
+  const host = document.createElement('div'); document.body.append(host);
+  const root = host.attachShadow({ mode: 'open' });
+  root.innerHTML = '<span class="cdx-button__icon menu"></span>';
+  await frame(); // the host's insertion is a plain added node: the shadow content is not searched by it
+  p.addRoot(root);
+  await frame();
+  expect(varIn(tokens, '--c').l).toBeGreaterThan(0.6);
+});

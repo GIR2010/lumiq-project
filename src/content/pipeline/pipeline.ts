@@ -666,6 +666,12 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     for (const item of items) charge(() => build(item));
     rebuildDefiners(changed, new Set(items.map((i) => i.source)));
     applyInline(styledIn(root));
+    // Its content was never an added node: look it up for the mask selectors already known.
+    const content = Array.from(root.children).filter((el) => !isOwnNode(el));
+    if (content.length && !masks.full) {
+      noteAdded(content);
+      requestFrame();
+    }
     observe(root);
   }
 

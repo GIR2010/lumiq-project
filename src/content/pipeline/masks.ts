@@ -49,6 +49,48 @@ function splitList(selector: string): string[] {
   return out.map((x) => x.trim()).filter(Boolean);
 }
 
+const ACTION_RE = /^:(?:hover|focus-visible|focus-within|focus|active)(?![-\w(])/i;
+
+/**
+ * Removes top-level user-action pseudo-classes (`:hover`, `:focus`, `:focus-visible`, `:focus-within`,
+ * `:active`), so a host matches its elements at rest; arguments of functional pseudo-classes, attribute
+ * selectors and strings are left as they are. A compound that held only such a pseudo-class becomes `*`.
+ */
+function stripActions(selector: string): string {
+  let out = '';
+  let depth = 0;
+  let quote = '';
+  for (let i = 0; i < selector.length; i++) {
+    const c = selector[i];
+    if (quote) {
+      out += c;
+      if (c === '\\') out += selector[++i] ?? '';
+      else if (c === quote) quote = '';
+      continue;
+    }
+    if (c === '"' || c === "'") quote = c;
+    else if (c === '(' || c === '[') depth++;
+    else if (c === ')' || c === ']') depth--;
+    else if (c === '\\') {
+      out += c + (selector[++i] ?? '');
+      continue;
+    } else if (c === ':' && depth === 0 && selector[i - 1] !== ':') {
+      const m = ACTION_RE.exec(selector.slice(i));
+      if (m) {
+        const next = selector[i + m[0].length];
+        const prev = out[out.length - 1];
+        const startsCompound = prev === undefined || /[\s>+~]/.test(prev);
+        const endsCompound = next === undefined || /[\s>+~]/.test(next);
+        if (startsCompound && endsCompound) out += '*';
+        i += m[0].length - 1;
+        continue;
+      }
+    }
+    out += c;
+  }
+  return out;
+}
+
 interface Part {
   host: string;
   pseudo: string; // '' or e.g. 'before'
@@ -60,10 +102,10 @@ function splitPseudo(selector: string): Part[] {
   for (const part of splitList(selector)) {
     const m = PSEUDO_RE.exec(part);
     if (!m) {
-      parts.push({ host: part, pseudo: '' });
+      parts.push({ host: stripActions(part), pseudo: '' });
       continue;
     }
-    const host = part.slice(0, m.index).trim();
+    const host = stripActions(part.slice(0, m.index).trim());
     if (!host) continue;
     parts.push({ host, pseudo: m[1].replace(/^:+/, '').toLowerCase() });
   }

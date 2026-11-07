@@ -174,4 +174,21 @@ describe('MaskIndex', () => {
     document.body.innerHTML = '<span class="m"></span>';
     expect(idx.refresh([])).toBe(true);
   });
+  it('ignores user-action pseudo-classes of the host (hover, focus, active)', () => {
+    document.body.innerHTML = '<button class="btn"><span class="m btn__icon"></span></button>';
+    idx.collect(parseCssText('.m{-webkit-mask-image:url(a.svg)}'));
+    expect(idx.refresh([document])).toBe(true);
+    expect(idx.isMaskRule('.btn:hover .btn__icon')).toBe(true);
+    expect(idx.isMaskRule('.btn:focus-visible > .btn__icon:active')).toBe(true);
+    expect(idx.isMaskRule('.btn:focus-within :hover')).toBe(true);
+    expect(idx.isMaskRule('.btn__icon:not(.m:hover)')).toBe(true); // inside :not() left as is
+    expect(idx.isMaskRule('.other:hover')).toBe(false);
+  });
+
+  it('collects mask selectors whose host has a user-action pseudo-class', () => {
+    document.body.innerHTML = '<a class="lnk"><i class="ic"></i></a>';
+    idx.collect(parseCssText('.lnk:hover .ic{mask-image:url(a.svg)}'));
+    expect(idx.refresh([document])).toBe(true);
+    expect(idx.isMaskRule('.ic')).toBe(true);
+  });
 });
