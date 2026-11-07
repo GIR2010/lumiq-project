@@ -165,7 +165,7 @@ test('dispose() до результата: колбэки не вызывают�
   await flush();
   a.dispose();
   d.resolve({ dataUrl: 'data:image/png;base64,DARK', animated: false });
-  await expect(p).resolves.toBeDefined();
+  await expect(p).resolves.toEqual({ verdict: 'other', animated: false });
   await flush();
   expect(cb).not.toHaveBeenCalled();
   expect(a.get('https://x/dark.png')).toBeUndefined();
@@ -184,6 +184,37 @@ test('dispose() с очередью: ожидающие request разрешаю
   a.dispose();
   await expect(queued).resolves.toEqual({ verdict: 'other', animated: false });
   expect(deps.fetchImage).toHaveBeenCalledTimes(1);
+});
+
+test('dispose(): кэшированные результаты больше не выдаются', async () => {
+  const a = new ImageAnalyzer(fakeDeps());
+  expect((await a.request('https://x/dark.png')).verdict).toBe('dark-icon');
+  a.dispose();
+  await expect(a.request('https://x/dark.png')).resolves.toEqual({ verdict: 'other', animated: false });
+});
+
+test('dispose(): ожидающие дубликаты in-flight получают other', async () => {
+  const d = deferred<{ dataUrl: string; animated: boolean }>();
+  const a = new ImageAnalyzer(fakeDeps({ fetchImage: vi.fn(() => d.promise) }));
+  const p1 = a.request('https://x/dark.png');
+  const p2 = a.request('https://x/dark.png');
+  await flush();
+  a.dispose();
+  d.resolve({ dataUrl: 'data:image/png;base64,DARK', animated: false });
+  await expect(p1).resolves.toEqual({ verdict: 'other', animated: false });
+  await expect(p2).resolves.toEqual({ verdict: 'other', animated: false });
+});
+
+test('бросающий слушатель onResult не ломает request и других слушателей', async () => {
+  const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  const a = new ImageAnalyzer(fakeDeps());
+  a.onResult(() => { throw new Error('boom'); });
+  const cb = vi.fn();
+  a.onResult(cb);
+  const rs = await Promise.all([a.request('https://x/dark.png'), a.request('https://x/dark.png')]);
+  expect(rs.map((r) => r.verdict)).toEqual(['dark-icon', 'dark-icon']);
+  expect(cb).toHaveBeenCalledTimes(1);
+  expect(debug).toHaveBeenCalled();
 });
 
 test('onResult: отписка прекращает уведомления', async () => {

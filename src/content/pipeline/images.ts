@@ -37,17 +37,20 @@ export class ImageAnalyzer {
   }
 
   request(url: string): Promise<IconResult> {
+    if (this.disposed) return Promise.resolve(other());
     const done = this.results.get(url);
     if (done) return Promise.resolve(done);
     const running = this.inflight.get(url);
     if (running) return running;
-    if (this.disposed || this.accepted >= this.maxImages) return Promise.resolve(other());
+    if (this.accepted >= this.maxImages) return Promise.resolve(other());
     this.accepted++;
     const p = this.schedule(() => this.analyze(url)).then((r) => {
       this.inflight.delete(url);
-      if (this.disposed) return r;
+      if (this.disposed) return other();
       this.results.set(url, r);
-      for (const cb of [...this.listeners]) cb(url, r);
+      for (const cb of [...this.listeners]) {
+        try { cb(url, r); } catch { console.debug('[DarkExt] icon result listener failed', url); }
+      }
       return r;
     });
     this.inflight.set(url, p);
