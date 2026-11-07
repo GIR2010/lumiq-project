@@ -1,0 +1,11 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Hidden scrollbar row</title>
+<style>
+  body { margin: 0; background: #fff; }
+  .row { overflow-x: scroll; width: 200px; white-space: nowrap; }
+  .row::-webkit-scrollbar { display: none; }
+  .wide { display: inline-block; width: 800px; height: 30px; background: #eee; }
+</style></head>
+<body>
+  <div class="row" id="row"><span class="wide">wide content</span></div>
+</body></html>

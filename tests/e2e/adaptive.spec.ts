@@ -1,4 +1,4 @@
-import type { BrowserContext, Page, Worker } from '@playwright/test';
+import type { BrowserContext, Locator, Page, Worker } from '@playwright/test';
 import { DEFAULT_GLOBAL } from '../../src/core/settings/defaults';
 import { bgL, expect, test, textL } from './extension';
 import { ORIGIN } from './server';
@@ -202,4 +202,88 @@ test('var() inside shorthands and color-mix() are darkened (translate.google.com
   await expect.poll(() => page.locator('#box').evaluate((el) => getComputedStyle(el).borderTopColor))
     .not.toBe('rgb(204, 204, 204)');
   await expect.poll(() => textL(page.locator('#label'))).toBeGreaterThan(0.6);
+});
+
+// --- stage 1.5a: colours and variables ---
+
+interface Swatch { r: number; g: number; b: number; L: number; C: number }
+/** An element's computed colour (normalised to 8-bit sRGB through a canvas) with OKLCH lightness and chroma. */
+function swatch(locator: Locator, prop: 'color' | 'backgroundColor' | 'borderTopColor'): Promise<Swatch> {
+  return locator.evaluate((el: Element, p: string) => {
+    const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true })!;
+    ctx.canvas.width = ctx.canvas.height = 1;
+    ctx.fillStyle = '#000';
+    ctx.fillStyle = (getComputedStyle(el) as unknown as Record<string, string>)[p];
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+    const lin = (v: number) => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    const [R, G, B] = [r, g, b].map(lin);
+    const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B);
+    const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B);
+    const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+    const L = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+    const a = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+    const bb = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+    return { r, g, b, L, C: Math.hypot(a, bb) };
+  }, prop);
+}
+const luminance = (c: Swatch) => {
+  const f = (v: number) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+};
+const contrast = (a: Swatch, b: Swatch) => {
+  const [l1, l2] = [luminance(a), luminance(b)];
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+};
+
+test('Tailwind opacity channels: rgb(... / var(--tw-*-opacity)) is darkened', async ({ context }) => {
+  const page = await open(context, 'tailwind.html');
+  await expect.poll(() => bgL(page.locator('.t'))).toBeLessThan(DARK);
+  await expect.poll(() => textL(page.locator('.x'))).toBeGreaterThan(0.6);
+});
+
+test('variable stacks: white as text and background, saturated circles, mixed uses', async ({ context }) => {
+  const page = await open(context, 'stacks.html');
+  await expect.poll(() => bgL(page.locator('#white'))).toBeLessThan(DARK);
+  await expect.poll(() => textL(page.locator('#has'))).toBeGreaterThan(0.5);
+  // The circle stays saturated and the white icon on it stays readable.
+  await expect.poll(async () => {
+    const bg = await swatch(page.locator('#circle'), 'backgroundColor');
+    const fg = await swatch(page.locator('#icon'), 'color');
+    return contrast(fg, bg) >= 4.5 && bg.C >= 0.1 && bg.L >= 0.25 && bg.L <= 0.65;
+  }).toBe(true);
+  const circle = await swatch(page.locator('#circle'), 'backgroundColor');
+  expect(circle.C).toBeGreaterThanOrEqual(0.1);
+  expect(circle.L).toBeGreaterThanOrEqual(0.25);
+  expect(circle.L).toBeLessThanOrEqual(0.65);
+  expect(contrast(await swatch(page.locator('#icon'), 'color'), circle)).toBeGreaterThanOrEqual(4.5);
+  // The variable used as both text colour and border colour stays readable.
+  expect((await swatch(page.locator('#has'), 'color')).L).toBeGreaterThan(0.5);
+});
+
+test('pagination: white text on an orange variable background keeps both readable', async ({ context }) => {
+  const page = await open(context, 'stacks.html');
+  await expect.poll(() => bgL(page.locator('#white'))).toBeLessThan(DARK); // extension has run
+  const bg = await swatch(page.locator('#sel'), 'backgroundColor');
+  const fg = await swatch(page.locator('#sel'), 'color');
+  expect(contrast(fg, bg)).toBeGreaterThanOrEqual(4.5);
+  expect(bg.C).toBeGreaterThanOrEqual(0.1);
+  expect(bg.L).toBeGreaterThanOrEqual(0.25);
+  expect(bg.L).toBeLessThanOrEqual(0.65);
+});
+
+test('inline custom property chained to a root variable reaches an svg icon', async ({ context }) => {
+  const page = await open(context, 'chain-inline.html');
+  await expect.poll(() => textL(page.locator('#ico'))).toBeGreaterThan(0.6);
+});
+
+test('mask icons: the masked element background is lightened with the text colour', async ({ context }) => {
+  const page = await open(context, 'mask-icons.html');
+  await expect.poll(() => bgL(page.locator('#ic'))).toBeGreaterThan(0.6);
+});
+
+test('a hidden ::-webkit-scrollbar row gets no scrollbar height with the theme on', async ({ context, bodyBg }) => {
+  const page = await open(context, 'scrollbar-hidden.html');
+  await expect.poll(() => bodyBg(page)).toBeLessThan(DARK);
+  expect(await page.locator('#row').evaluate((el) => (el as HTMLElement).offsetHeight - el.clientHeight)).toBe(0);
 });

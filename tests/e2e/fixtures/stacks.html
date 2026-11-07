@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Variable stacks: same variable as text and background</title>
+<style>
+  :root { --white: #fff; --purple-400: #6a50c9; --green-400: #2f6f44; --orange-400: #f48225; }
+  body { margin: 0; background: #fff; }
+  .fc-white { color: var(--white); }
+  .bg-white { background: var(--white); }
+  .bg-purple-400 { background-color: var(--purple-400); padding: 8px; }
+  .has { --fc: var(--green-400); color: var(--fc); border: 1px solid var(--green-400); }
+  .sel { background: var(--orange-400); color: var(--white); padding: 4px 8px; display: inline-block; }
+</style></head>
+<body>
+  <div class="bg-purple-400" id="circle"><span class="fc-white" id="icon">A</span></div>
+  <div class="bg-white" id="white">B</div>
+  <div class="has" id="has">Green label</div>
+  <div><span class="sel" id="sel">1</span></div>
+</body></html>
