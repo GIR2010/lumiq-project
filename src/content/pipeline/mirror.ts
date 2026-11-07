@@ -2,9 +2,11 @@ import { parseColor } from '../../core/color';
 import { isLinkSelector, mapDeclarationValue, mapValueWithRole, rewriteVarUses, twinName } from '../../core/css/declarations';
 import type { VarRoles } from '../../core/css/vars';
 import type { ColorFn, Role, RuleContext } from '../../core/mapping/types';
-import { isGroupingRule, isStyleRule, ruleHeader, varShorthands } from './sheets';
+import { declaresBackground, isGroupingRule, isStyleRule, ruleHeader, varShorthands } from './sheets';
 
 const MASK_TEXT_PROPS = new Set(['background-color', 'background']);
+/** Colour and CSS-wide keywords: an override with one of these must shadow the inherited twins too. */
+const TWIN_KEYWORDS = /^(?:transparent|currentcolor|inherit|initial|unset|revert|revert-layer)$/i;
 
 function recolorAndRewrite(value: string, role: Role, fn: ColorFn, ctx: RuleContext, vars: VarRoles, prop = ''): string | null {
   const mapped = mapValueWithRole(value, role, fn, ctx, prop);
@@ -18,10 +20,10 @@ function customPropCss(prop: string, value: string, imp: string, fn: ColorFn, ct
   const main = recolorAndRewrite(value, vars.roleOf(prop), fn, ctx, vars);
   if (main !== null) out += `${prop}:${main}${imp};`;
   if (!vars.isMixed(prop)) return out;
-  const hasVar = /var\(/i.test(value);
+  const always = /var\(/i.test(value) || TWIN_KEYWORDS.test(value.trim());
   for (const role of vars.rolesOf(prop)) {
     const recolored = mapValueWithRole(value, role, fn, ctx);
-    if (recolored === null && !hasVar) continue;
+    if (recolored === null && !always) continue;
     const twin = recolorAndRewrite(value, role, fn, ctx, vars) ?? value;
     out += `${twinName(prop, role)}:${twin}${imp};`;
   }
@@ -33,7 +35,7 @@ function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoles, isMask?: 
   const selector = rule.selectorText;
   const bg = st.getPropertyValue('background-color');
   const link = isLinkSelector(selector);
-  const asMask = isMask?.(selector) ?? false;
+  const asMask = !!isMask && declaresBackground(st) && isMask(selector);
   const ctx: RuleContext = { selector, ...link, pairedBg: (bg && parseColor(bg)) || undefined,
     // Closures: the table's methods rely on `this`, but consumers call them detached.
     vars: { roleOf: (n) => vars.roleOf(n), isMixed: (n) => vars.isMixed(n) } };

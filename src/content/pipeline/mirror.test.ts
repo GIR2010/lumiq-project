@@ -78,3 +78,25 @@ test('двойники сохраняют !important', () => {
   const css = buildMirrorCss(parseCssText(':root{--w:#fff!important}'), fn, stub({ '--w': { roles: ['bg', 'text'] } }));
   expect(css).toBe(':root{--w:#111111 !important;--w__dx-bg:#111111 !important;--w__dx-text:#eeeeee !important;}');
 });
+for (const kw of ['transparent', 'currentColor']) {
+  test(`R17: ключевое значение (${kw}) смешанной переменной получает двойники`, () => {
+    const css = buildMirrorCss(parseCssText(`:root{--c:#fff}.g{--c:${kw}}`), fn, stub({ '--c': { roles: ['bg', 'text'] } }));
+    const g = css.slice(css.indexOf('.g{'));
+    const v = kw.toLowerCase() === 'currentcolor' ? g.match(/--c__dx-bg:([^;]*);/)![1] : kw;
+    expect(v.toLowerCase()).toBe(kw.toLowerCase());
+    expect(g).toMatch(new RegExp(`^\.g\{(--c:[^;]*;)?--c__dx-bg:${v};--c__dx-text:${v};\}$`, 'i'));
+  });
+}
+test('R17: CSS-wide ключевые слова (inherit/initial/unset/revert/revert-layer) тоже дают двойники', () => {
+  for (const kw of ['inherit', 'initial', 'unset', 'revert', 'revert-layer']) {
+    const css = buildMirrorCss(parseCssText(`.g{--c:${kw}}`), fn, stub({ '--c': { roles: ['bg', 'text'] } }));
+    expect(css, kw).toContain('--c__dx-bg:');
+    expect(css, kw).toContain('--c__dx-text:');
+  }
+});
+test('R19: isMask вызывается только для правил с фоном', () => {
+  const seen: string[] = [];
+  const isMask = (s: string): boolean => { seen.push(s); return false; };
+  buildMirrorCss(parseCssText('.a{color:#000}.b{background-color:#fff}.c{background:#fff}.d{--x:#fff}'), fn, stub({}), isMask);
+  expect(seen).toEqual(['.b', '.c']);
+});

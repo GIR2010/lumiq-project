@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, test } from 'vitest';
 import { VarRoleCounter, type VarLinks } from '../../core/css/vars';
 import { parseCssText, countVarUsage, countStyleDeclaration } from './sheets';
 
@@ -60,4 +60,10 @@ describe('mask elements', () => {
     expect(c.countsOf('--b')?.get('bg')).toBeUndefined();
     expect(c.countsOf('--b')?.get('border')).toBe(1);
   });
+});
+test('R19: countVarUsage вызывает isMask только для правил с фоном', () => {
+  const seen: string[] = [];
+  const isMask = (s: string): boolean => { seen.push(s); return false; };
+  countVarUsage(parseCssText('.a{color:var(--x)}.b{background-color:var(--x)}.c{width:1px}'), new VarRoleCounter(), undefined, undefined, isMask);
+  expect(seen).toEqual(['.b']);
 });

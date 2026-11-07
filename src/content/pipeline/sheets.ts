@@ -70,6 +70,14 @@ export function varShorthands(st: CSSStyleDeclaration): Array<[string, string]> 
 
 const MASK_TEXT_PROPS = new Set(['background-color', 'background']);
 
+/**
+ * Whether the block declares a background colour (longhand or shorthand, var() shorthands included).
+ * Only such rules can be mask rules, so the (costly) mask lookup is skipped for the rest.
+ */
+export function declaresBackground(st: CSSStyleDeclaration): boolean {
+  return !!(st.getPropertyValue('background-color') || st.getPropertyValue('background'));
+}
+
 function countOne(prop: string, value: string, counter: VarRoleCounter, links: VarLinks | undefined, asMask: boolean): void {
   if (asMask && MASK_TEXT_PROPS.has(prop)) {
     // A mask paints with background-color, so these usages are icon (text) colours.
@@ -108,7 +116,8 @@ export function countVarUsage(
 ): void {
   for (const rule of Array.from(rules)) {
     if (isStyleRule(rule)) {
-      countStyleDeclaration(rule.style, counter, links, defs, isMask?.(rule.selectorText) ?? false);
+      const asMask = !!isMask && declaresBackground(rule.style) && isMask(rule.selectorText);
+      countStyleDeclaration(rule.style, counter, links, defs, asMask);
     } else if (isGroupingRule(rule)) {
       countVarUsage(rule.cssRules, counter, defs, links, isMask);
     }
