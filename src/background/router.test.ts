@@ -3,6 +3,7 @@ import { installFakeChrome } from '../../tests/fakes/chrome';
 import { SettingsStore } from './settings-store';
 import { TabStateStore } from './tab-state';
 import { createRouter, broadcast } from './router';
+import { SentConfigs } from './sent-configs';
 
 let fake: ReturnType<typeof installFakeChrome>;
 beforeEach(() => { fake = installFakeChrome(); });
@@ -90,5 +91,42 @@ describe('broadcast', () => {
     fake.tabs.query.mockRejectedValueOnce(new Error('x'));
     await expect(broadcast(store)).resolves.toBeUndefined();
     warn.mockRestore();
+  });
+});
+
+describe('I2: дедупликация CONFIG_CHANGED по вкладкам', () => {
+  test('та же конфигурация не отправляется повторно; кэш сбрасывают GET_CONFIG, навигация и закрытие вкладки', async () => {
+    const store = new SettingsStore(); await store.ready;
+    const sent = new SentConfigs();
+    const r = createRouter(store, new TabStateStore(), sent);
+    fake.tabs.query.mockResolvedValue([{ id: 7, url: 'https://a.com/' }]);
+    await broadcast(store, sent);
+    await broadcast(store, sent);
+    expect(fake.tabs.sendMessage).toHaveBeenCalledTimes(1);
+    store.updateSite('b.com', { on: false }); // another site: a.com's config is unchanged
+    await broadcast(store, sent);
+    expect(fake.tabs.sendMessage).toHaveBeenCalledTimes(1);
+    store.updateSite('a.com', { on: false });
+    await broadcast(store, sent);
+    expect(fake.tabs.sendMessage).toHaveBeenCalledTimes(2);
+    await r({ type: 'GET_CONFIG' }, sender('https://a.com/')); // a fresh content script in tab 7
+    await broadcast(store, sent);
+    expect(fake.tabs.sendMessage).toHaveBeenCalledTimes(3);
+    fake.tabs.onUpdated.emit(7, { status: 'loading' });
+    await broadcast(store, sent);
+    expect(fake.tabs.sendMessage).toHaveBeenCalledTimes(4);
+    fake.tabs.onRemoved.emit(7);
+    await broadcast(store, sent);
+    expect(fake.tabs.sendMessage).toHaveBeenCalledTimes(5);
+  });
+
+  test('неудачная отправка не запоминается', async () => {
+    const store = new SettingsStore(); await store.ready;
+    const sent = new SentConfigs();
+    fake.tabs.query.mockResolvedValue([{ id: 7, url: 'https://a.com/' }]);
+    fake.tabs.sendMessage.mockRejectedValueOnce(new Error('Could not establish connection. Receiving end does not exist.'));
+    await broadcast(store, sent);
+    await broadcast(store, sent);
+    expect(fake.tabs.sendMessage).toHaveBeenCalledTimes(2);
   });
 });

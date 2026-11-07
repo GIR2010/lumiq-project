@@ -74,6 +74,7 @@ export function installFakeChrome() {
       sendMessage: vi.fn(async (_id: number, _msg: unknown) => undefined as unknown),
       reload: vi.fn(async (_id?: number) => undefined),
       onRemoved: makeEvent<(...a: any[]) => void>(),
+      onUpdated: makeEvent<(...a: any[]) => void>(),
     },
     scripting: {
       registerContentScripts: vi.fn(async (scripts: { id: string }[]) => {

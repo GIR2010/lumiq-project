@@ -2,6 +2,7 @@ import { resolveConfig, siteKey, type EffectiveConfig } from '../core/settings/r
 import type { ContentMessage, PopupState, Request, TabState } from '../shared/messages';
 import { setBadge } from './badge';
 import { fetchCss } from './css-fetch';
+import type { SentConfigs } from './sent-configs';
 import type { SettingsStore } from './settings-store';
 import type { TabStateStore } from './tab-state';
 
@@ -14,10 +15,12 @@ function configFor(store: SettingsStore, url: string | undefined): EffectiveConf
   return resolveConfig(host, g, sites[host], styles);
 }
 
-export function createRouter(store: SettingsStore, tabs: TabStateStore) {
+export function createRouter(store: SettingsStore, tabs: TabStateStore, sent?: SentConfigs) {
   return async (msg: Request, sender: chrome.runtime.MessageSender): Promise<unknown> => {
     switch (msg.type) {
       case 'GET_CONFIG':
+        // A fresh content script: whatever was sent to the tab before is no longer what it holds.
+        if (sender.tab?.id !== undefined) sent?.forget(sender.tab.id);
         return configFor(store, sender.tab?.url);
       case 'FETCH_CSS':
         try { return { text: await fetchCss(msg.url) }; }
@@ -50,17 +53,20 @@ export function createRouter(store: SettingsStore, tabs: TabStateStore) {
   };
 }
 
-export async function broadcast(store: SettingsStore): Promise<void> {
+/** Sends CONFIG_CHANGED to every supported tab whose resolved config differs from the one it last got. */
+export async function broadcast(store: SettingsStore, sent?: SentConfigs): Promise<void> {
   let list: chrome.tabs.Tab[];
   try { list = await chrome.tabs.query({}); }
   catch (e) { console.warn('[DarkExt] tabs.query failed', e); return; }
   await Promise.all(list.map(async (tab) => {
     if (tab.id === undefined) return;
     const config = configFor(store, tab.url);
-    if (!config) return;
+    if (!config || (sent && !sent.isNew(tab.id, config))) return;
     const msg: ContentMessage = { type: 'CONFIG_CHANGED', config };
-    try { await chrome.tabs.sendMessage(tab.id, msg); }
-    catch (e) {
+    try {
+      await chrome.tabs.sendMessage(tab.id, msg);
+      sent?.remember(tab.id, config);
+    } catch (e) {
       if (!NO_RECEIVER.test(e instanceof Error ? e.message : String(e))) console.warn('[DarkExt] broadcast failed', tab.id, e);
     }
   }));

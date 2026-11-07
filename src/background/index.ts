@@ -3,11 +3,13 @@ import type { Request } from '../shared/messages';
 import { handleCommand } from './commands';
 import { syncRegistration } from './registration';
 import { broadcast, createRouter } from './router';
+import { SentConfigs } from './sent-configs';
 import { SettingsStore } from './settings-store';
 import { TabStateStore } from './tab-state';
 
 const store = new SettingsStore();
-const route = createRouter(store, new TabStateStore());
+const sent = new SentConfigs();
+const route = createRouter(store, new TabStateStore(), sent);
 
 const syncRegistrationFromStore = () => {
   const { g, sites } = store.snapshot();
@@ -16,7 +18,7 @@ const syncRegistrationFromStore = () => {
 
 // Listeners are registered synchronously at top level (MV3 requirement).
 store.onChange(() => {
-  void broadcast(store);
+  void broadcast(store, sent);
   void syncRegistrationFromStore();
 });
 
