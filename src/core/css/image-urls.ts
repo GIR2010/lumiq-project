@@ -189,7 +189,7 @@ export function absolutizeUrls(css: string, base: string): string {
       if (arg && !arg.startsWith('#') && !/^data:/i.test(arg)) {
         try {
           const abs = new URL(arg, base).href;
-          out += `${css.slice(last, i)}url("${abs.replace(/[\\"]/g, '\$&')}")`;
+          out += `${css.slice(last, i)}url("${abs.replace(/[\\"]/g, '\\$&')}")`;
           last = parsed.end;
         } catch { /* unresolvable: keep */ }
       }

@@ -1,12 +1,13 @@
 import { classifyIcon, type IconVerdict } from '../../core/image/classify';
+import { gifFrameCount } from '../../core/image/gif';
 import { invertLightness } from '../../core/image/invert';
 
 export interface DecodedImage { width: number; height: number; pixels: Uint8ClampedArray }
 
 export interface ImageDeps {
   fetchImage(url: string): Promise<{ dataUrl: string; animated: boolean }>;
-  /** Pixels downscaled to ≤ 64×64 (aspect kept); `full()` lazily renders at natural size. */
-  decode(dataUrl: string): Promise<DecodedImage & { full: () => DecodedImage }>;
+  /** Pixels downscaled to ≤ 64×64 (aspect kept); `full()` lazily renders at the natural size given. */
+  decode(dataUrl: string): Promise<DecodedImage & { naturalWidth: number; naturalHeight: number; full: () => DecodedImage }>;
   /** → data:image/png */
   encode(width: number, height: number, pixels: Uint8ClampedArray): string;
 }
@@ -14,6 +15,28 @@ export interface ImageDeps {
 export interface IconResult { verdict: IconVerdict; inverted?: string; animated: boolean }
 
 const other = (): IconResult => ({ verdict: 'other', animated: false });
+
+/** Larger images get a verdict but no inverted copy: rendering and converting them is too costly. */
+const MAX_INVERT_PIXELS = 2_000_000;
+
+/** Bytes of a data: URL (base64 or percent-encoded); empty when malformed. */
+function dataUrlBytes(url: string): Uint8Array {
+  const comma = url.indexOf(',');
+  if (comma < 0) return new Uint8Array(0);
+  const body = url.slice(comma + 1);
+  try {
+    // Percent-decoding byte by byte: decodeURIComponent would read the bytes as UTF-8.
+    const bin = /;base64$/i.test(url.slice(0, comma))
+      ? atob(body)
+      : body.replace(/%([0-9a-f]{2})/gi, (_, h: string) => String.fromCharCode(parseInt(h, 16)));
+    return Uint8Array.from(bin, (c) => c.charCodeAt(0) & 0xff);
+  } catch {
+    return new Uint8Array(0);
+  }
+}
+
+/** An inline GIF with more than one frame (counted locally, as the service worker does for fetched ones). */
+const animatedDataGif = (url: string) => /^data:image\/gif[;,]/i.test(url) && gifFrameCount(dataUrlBytes(url)) > 1;
 
 /** Analyses page images (fetch → decode → classify → invert) with cache, in-flight dedup and limits. */
 export class ImageAnalyzer {
@@ -87,11 +110,12 @@ export class ImageAnalyzer {
     if (this.disposed) return other();
     try {
       const { dataUrl, animated } = url.startsWith('data:')
-        ? { dataUrl: url, animated: false }
+        ? { dataUrl: url, animated: animatedDataGif(url) }
         : await this.deps.fetchImage(url);
       const img = await this.deps.decode(dataUrl);
       const verdict = classifyIcon(img.pixels, img.width, img.height);
       if (verdict !== 'dark-icon' || animated) return { verdict, animated };
+      if (img.naturalWidth * img.naturalHeight > MAX_INVERT_PIXELS) return { verdict, animated };
       const full = img.full();
       return { verdict, animated, inverted: this.deps.encode(full.width, full.height, invertLightness(full.pixels)) };
     } catch {
@@ -134,7 +158,7 @@ export function browserImageDeps(
       const h = img.naturalHeight || SAMPLE;
       const scale = Math.min(1, SAMPLE / Math.max(w, h));
       const small = drawImage(img, Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)));
-      return { ...small, full: () => drawImage(img, w, h) };
+      return { ...small, naturalWidth: w, naturalHeight: h, full: () => drawImage(img, w, h) };
     },
     encode(width, height, pixels) {
       const canvas = document.createElement('canvas');

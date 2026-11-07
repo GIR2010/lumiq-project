@@ -87,5 +87,7 @@ describe('absolutizeUrls', () => {
   });
   it('экранирование кавычек и обратной косой', () =>
     expect(absolutizeUrls('.a{background:url(a\\"b.png)}', B)).toBe('.a{background:url("https://cdn.example/css/a%22b.png")}'));
+  it('обратная косая и кавычка в абсолютном адресе экранируются (непрозрачная схема)', () =>
+    expect(absolutizeUrls('.a{background:url("foo:a\\\\b\\"c")}', B)).toBe('.a{background:url("foo:a\\\\b\\"c")}'));
   it('битый url( оставлен как есть', () => expect(absolutizeUrls('.a{background:url(a b)}', B)).toBe('.a{background:url(a b)}'));
 });

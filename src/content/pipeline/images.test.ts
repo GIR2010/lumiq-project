@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { ImageAnalyzer, type ImageDeps } from './images';
+import { gif } from '../../../tests/e2e/images';
 
 const W = 8, H = 8;
 /** Left half opaque (black or white), right half transparent. */
@@ -29,7 +30,7 @@ function fakeDeps(over: Partial<ImageDeps> = {}) {
     })),
     decode: vi.fn(async (dataUrl: string) => {
       const pixels = iconPixels(dataUrl.includes('DARK'));
-      return { width: W, height: H, pixels, full: () => ({ width: W, height: H, pixels }) };
+      return { width: W, height: H, pixels, naturalWidth: W, naturalHeight: H, full: () => ({ width: W, height: H, pixels }) };
     }),
     encode: vi.fn((_w: number, _h: number, _p: Uint8ClampedArray) => 'data:image/png;base64,INV'),
     ...over,
@@ -236,4 +237,38 @@ test('data: URL не вызывает fetchImage и декодируется н�
   expect(r.verdict).toBe('dark-icon');
   expect(r.animated).toBe(false);
   expect(r.inverted).toMatch(/^data:image\/png/);
+});
+
+test('I2: естественный размер > 2 000 000 px → вердикт без inverted, full() не вызывается', async () => {
+  const full = vi.fn(() => ({ width: 2000, height: 1001, pixels: new Uint8ClampedArray(0) }));
+  const deps = fakeDeps({
+    decode: vi.fn(async () => ({ width: W, height: H, pixels: iconPixels(true), naturalWidth: 2000, naturalHeight: 1001, full })),
+  });
+  const r = await new ImageAnalyzer(deps).request('https://x/dark-huge.png');
+  expect(r).toEqual({ verdict: 'dark-icon', animated: false });
+  expect(full).not.toHaveBeenCalled();
+  expect(deps.encode).not.toHaveBeenCalled();
+  // exactly at the cap: still swapped
+  const ok = fakeDeps({
+    decode: vi.fn(async () => ({ width: W, height: H, pixels: iconPixels(true), naturalWidth: 2000, naturalHeight: 1000, full: () => ({ width: W, height: H, pixels: iconPixels(true) }) })),
+  });
+  expect((await new ImageAnalyzer(ok).request('https://x/dark-big.png')).inverted).toBeDefined();
+});
+
+const b64 = (b: Uint8Array) => Buffer.from(b).toString('base64');
+test('data:image/gif: анимированный встроенный GIF не подменяется, однокадровый — подменяется', async () => {
+  const pal: [number, number, number][] = [[0, 0, 0], [0x22, 0x22, 0x22]];
+  const anim = `data:image/gif;base64,${b64(gif(4, 4, pal, [() => 1, () => 0]))}`;
+  const still = `data:image/gif;base64,${b64(gif(4, 4, pal, [() => 1]))}`;
+  const deps = fakeDeps({ decode: vi.fn(async () => ({ width: W, height: H, pixels: iconPixels(true), naturalWidth: W, naturalHeight: H, full: () => ({ width: W, height: H, pixels: iconPixels(true) }) })) });
+  const a = new ImageAnalyzer(deps);
+  expect(await a.request(anim)).toEqual({ verdict: 'dark-icon', animated: true });
+  const r = await a.request(still);
+  expect(r.animated).toBe(false);
+  expect(r.inverted).toBeDefined();
+  // percent-encoded (non-base64) GIF data is read too; garbage base64 → treated as one frame
+  const pct = `data:image/gif,${Array.from(gif(4, 4, pal, [() => 1, () => 0]), (c) => `%${c.toString(16).padStart(2, '0')}`).join('')}`;
+  expect((await a.request(pct)).animated).toBe(true);
+  expect((await a.request('data:image/gif;base64,@@@')).animated).toBe(false);
+  expect(deps.fetchImage).not.toHaveBeenCalled();
 });
