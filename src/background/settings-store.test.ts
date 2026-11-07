@@ -15,11 +15,12 @@ test('пустое хранилище → умолчания', async () => {
 
 test('10 быстрых изменений → одна запись с последним значением, 10 уведомлений', async () => {
   const s = new SettingsStore(); await s.ready; const cb = vi.fn(); s.onChange(cb);
-  for (let i = 0; i < 10; i++) s.updateGlobal({ adj: { ...DEFAULT_GLOBAL.adj, br: 100 + i } });
+  // 101..110: ten real changes (br 100 is the default, and a no-op update neither notifies nor writes).
+  for (let i = 0; i < 10; i++) s.updateGlobal({ adj: { ...DEFAULT_GLOBAL.adj, br: 101 + i } });
   expect(cb).toHaveBeenCalledTimes(10);
   await vi.advanceTimersByTimeAsync(500);
   expect(chrome.storage.sync.set).toHaveBeenCalledTimes(1);
-  expect((chrome.storage.sync.set as Mock).mock.calls[0][0].g.adj.br).toBe(109);
+  expect((chrome.storage.sync.set as Mock).mock.calls[0][0].g.adj.br).toBe(110);
 });
 
 test('updateSite(null) удаляет ключ s:<host>', async () => {
@@ -127,4 +128,27 @@ test('сбой записи: warn, без необработанного отк�
   s.updateGlobal({ sys: true });
   await expect(s.flush()).resolves.toBeUndefined();
   expect(warn).toHaveBeenCalledWith('[DarkExt] settings write failed', 'g', expect.any(Error));
+});
+
+test('I1: загрузка сохранённых записей при пробуждении не вызывает onChange', async () => {
+  await chrome.storage.sync.set({ g: { ...DEFAULT_GLOBAL, def: 'off' }, 's:a.com': { on: true } });
+  const s = new SettingsStore(); const cb = vi.fn(); s.onChange(cb);
+  await s.ready;
+  expect(s.snapshot().g.def).toBe('off');
+  expect(s.snapshot().sites['a.com']).toEqual({ on: true });
+  expect(cb).not.toHaveBeenCalled();
+});
+
+test('I1: изменение, которое ничего не меняет, не уведомляет и не пишет', async () => {
+  await chrome.storage.sync.set({ 's:a.com': { on: true } });
+  const s = new SettingsStore(); await s.ready; const cb = vi.fn(); s.onChange(cb);
+  (chrome.storage.sync.set as Mock).mockClear();
+  s.updateSite('a.com', { on: true });
+  s.updateSite('b.com', null);
+  s.updateSite('b.com', { on: null });
+  s.updateGlobal({ def: DEFAULT_GLOBAL.def, adj: { br: DEFAULT_GLOBAL.adj.br } as typeof DEFAULT_GLOBAL.adj });
+  await vi.advanceTimersByTimeAsync(500);
+  expect(cb).not.toHaveBeenCalled();
+  expect(chrome.storage.sync.set).not.toHaveBeenCalled();
+  expect(chrome.storage.sync.remove).not.toHaveBeenCalled();
 });

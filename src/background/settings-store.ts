@@ -5,6 +5,7 @@ import {
   GlobalSettingsSchema, SiteSettingsSchema, UserStyleSchema,
   type GlobalSettings, type SiteSettings, type UserStyle,
 } from '../core/settings/schema';
+import { deepEqual } from '../shared/deep-equal';
 import type { Snapshot } from '../shared/messages';
 
 const SITE_PREFIX = 's:';
@@ -47,14 +48,19 @@ export class SettingsStore {
     return { g: this.g, styles: this.styles, sites: this.sites };
   }
 
+  /** A change that leaves the settings as they are neither notifies nor writes (once loaded). */
   updateGlobal(patch: Partial<GlobalSettings>): void {
-    this.g = applyGlobalPatch(this.g, patch);
+    const next = applyGlobalPatch(this.g, patch);
+    if (!this.loading && deepEqual(next, this.g)) return;
+    this.g = next;
     this.schedule('g', this.g);
     this.emit();
   }
 
   updateSite(host: string, patch: Patch<SiteSettings> | null): void {
     const next = patch === null ? undefined : applySitePatch(this.sites[host], patch);
+    // While loading, even a "same" value is recorded so the stored record does not overwrite it.
+    if (!this.loading && deepEqual(next, this.sites[host])) return;
     const sites = { ...this.sites };
     if (next) sites[host] = next; else delete sites[host];
     this.sites = sites;
@@ -99,13 +105,16 @@ export class SettingsStore {
     }
   }
 
+  /**
+   * Initial load (also on every service-worker wake): never emits, since nothing changed for the tabs;
+   * consumers wait for `ready` instead.
+   */
   private async load(): Promise<void> {
-    let changed = false;
     try {
       const all = await chrome.storage.sync.get(null);
       for (const [key, value] of Object.entries(all)) {
         if (this.pending.has(key) || this.touched.has(key)) continue;
-        if (this.applyRecord(key, value)) changed = true;
+        this.applyRecord(key, value);
       }
     } catch (e) {
       console.warn('[DarkExt] settings load failed', e);
@@ -113,7 +122,6 @@ export class SettingsStore {
       this.loading = false;
       this.touched.clear();
     }
-    if (changed) this.emit();
   }
 
   /** Validates and applies one stored record; returns true if the in-memory state changed. */
