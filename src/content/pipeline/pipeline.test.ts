@@ -475,3 +475,17 @@ test('M4: freeze останавливает наблюдение, не трог�
   expect(document.querySelectorAll('[data-darkext=base]').length).toBe(1);
   expect(darkened).not.toBe('color:#000');
 });
+
+test('I6: <link>, ещё грузящийся к DOMContentLoaded, удерживает запасной стиль до своего зеркала', async () => {
+  const readyState = vi.spyOn(document, 'readyState', 'get').mockReturnValue('loading');
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  const link = document.createElement('link'); link.rel = 'stylesheet'; document.head.append(link); // sheet === null in jsdom
+  readyState.mockReturnValue('interactive');
+  document.dispatchEvent(new Event('readystatechange')); // before the observer's frame
+  await frame(); // the observer sees the link: still loading
+  expect(fallback()).not.toBeNull();
+  Object.defineProperty(link, 'sheet', { value: { cssRules: parseCssText('.l{color:#000}'), ownerNode: link } });
+  link.dispatchEvent(new Event('load'));
+  expect(mirrorOf(link)).not.toBeNull();
+  expect(fallback()).toBeNull();
+});

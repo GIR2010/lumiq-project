@@ -73,7 +73,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   /** Raw cross-origin CSS by URL; survives update/detach so nothing is fetched twice. */
   const rawCss = new Map<string, Promise<string>>();
   const statusListeners: Array<(s: PipelineStatus) => void> = [];
-  /** Sources that currently have a mirror. Once the budget is spent only these are rebuilt. */
+  /** Sources that currently have a mirror. */
   const mirrored = new Set<Source>();
   /** Variable roles from per-source usage counts, and the variables each source defines. */
   const vars = new VarRoleTable();
@@ -298,8 +298,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     writer.removeMirror(source);
   }
 
-  function forget(source: Source): void {
-    release(source);
+  /** Drops what is known about the source; `done`: it no longer holds back the waits (gone or given up). */
+  function forget(source: Source, done = true): void {
+    if (done) release(source);
     entries.delete(source);
     if (!(source instanceof Element)) adoptedRoots.delete(source);
     varDefs.delete(source);
@@ -404,12 +405,15 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   function resolve(source: Source, root: Root): Item | null {
     const sheet = sheetOf(source);
     if (!sheet) {
-      forget(source);
-      if (source instanceof Element && isStylesheetLink(source)) waitLoad(source, root);
+      // A <link> without a sheet is still loading: it keeps holding back the fallback and the load window.
+      const loading = source instanceof Element && isStylesheetLink(source);
+      forget(source, false);
+      if (loading) waitLoad(source, root); else settle(source, false);
       return null;
     }
     if (sheet.disabled) {
-      forget(source);
+      forget(source, false);
+      settle(source, false);
       return null;
     }
     const rules = readRules(sheet);
