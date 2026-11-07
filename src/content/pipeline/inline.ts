@@ -1,6 +1,8 @@
 import { parseColor } from '../../core/color';
-import { isLinkSelector, mapDeclarationValue, PROPERTY_ROLES } from '../../core/css/declarations';
+import { isLinkSelector, mapDeclarationValue, mapValueWithRole, PROPERTY_ROLES, rewriteVarUses } from '../../core/css/declarations';
+import type { VarRoles } from '../../core/css/vars';
 import type { ColorFn, RuleContext } from '../../core/mapping/types';
+import { varShorthands } from './sheets';
 
 interface Decl { value: string; priority: string }
 
@@ -26,7 +28,7 @@ export class InlineStyler {
   /** Attribute value (null = removed) set by restoreAll, so its mutation record is recognised as ours. */
   private restored = new Map<Element, string | null>();
 
-  apply(el: Element, fn: ColorFn): void {
+  apply(el: Element, fn: ColorFn, vars?: Pick<VarRoles, 'roleOf' | 'isMixed'>): void {
     const st = (el as HTMLElement).style;
     if (!st) return;
     const attr = el.getAttribute('style');
@@ -40,15 +42,28 @@ export class InlineStyler {
     }
     const tag = el.tagName.toLowerCase();
     const bg = touch?.props.get('background-color')?.orig.value ?? st.getPropertyValue('background-color');
-    const ctx: RuleContext = { selector: tag, ...isLinkSelector(tag), pairedBg: (bg && parseColor(bg)) || undefined };
+    const ctx: RuleContext = { selector: tag, ...isLinkSelector(tag), pairedBg: (bg && parseColor(bg)) || undefined, vars };
     const updates: Array<[string, string, Decl]> = [];
+    const consider = (prop: string): void => {
+      if (seen.has(prop) || touch?.props.has(prop)) return;
+      seen.add(prop);
+      const orig = declOf(st, prop);
+      let mapped: string | null;
+      if (prop.startsWith('--')) {
+        if (!vars || !/var\(\s*--/i.test(orig.value)) return;
+        const role = vars.roleOf(prop);
+        const recoloured = mapValueWithRole(orig.value, role, fn, ctx);
+        // Only declarations that use a mixed variable are ours; a plain recolour is out of scope here.
+        mapped = rewriteVarUses(recoloured ?? orig.value, role, (n) => vars.isMixed(n));
+      } else mapped = mapDeclarationValue(prop, orig.value, fn, ctx);
+      if (mapped !== null) updates.push([prop, mapped, orig]);
+    };
+    const seen = new Set<string>();
     for (let i = 0; i < st.length; i++) {
       const prop = st.item(i);
-      if (!(prop in PROPERTY_ROLES) || touch?.props.has(prop)) continue;
-      const orig = declOf(st, prop);
-      const mapped = mapDeclarationValue(prop, orig.value, fn, ctx);
-      if (mapped !== null) updates.push([prop, mapped, orig]);
+      if (prop in PROPERTY_ROLES || prop.startsWith('--')) consider(prop);
     }
+    for (const [shorthand] of varShorthands(st)) consider(shorthand);
     if (!updates.length) {
       if (!touch) return;
       if (!touch.props.size) this.forget(el);
