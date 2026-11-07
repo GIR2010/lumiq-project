@@ -1,0 +1,110 @@
+{
+  "extName": {
+    "message": "DarkExt"
+  },
+  "extDescription": {
+    "message": "Тёмный режим для любого сайта в ваших цветах"
+  },
+  "cmdToggleSite": {
+    "message": "Вкл/выкл тёмный режим на этом сайте"
+  },
+  "cmdToggleGlobal": {
+    "message": "Переключить: включено везде / выключено везде"
+  },
+  "statusActive": {
+    "message": "Активно"
+  },
+  "statusOff": {
+    "message": "Выключено"
+  },
+  "statusSystemLight": {
+    "message": "Выключено — светлая тема системы"
+  },
+  "statusAlreadyDark": {
+    "message": "Сайт уже тёмный"
+  },
+  "statusError": {
+    "message": "Ошибка на этой странице"
+  },
+  "statusHeavy": {
+    "message": "Страница слишком тяжёлая, часть стилей не обработана"
+  },
+  "statusUnsupported": {
+    "message": "На этой странице недоступно"
+  },
+  "siteToggleLabel": {
+    "message": "На этом сайте"
+  },
+  "siteDefault": {
+    "message": "По умолчанию"
+  },
+  "siteOn": {
+    "message": "Вкл"
+  },
+  "siteOff": {
+    "message": "Выкл"
+  },
+  "alreadyDarkBanner": {
+    "message": "Сайт уже тёмный — не затемняю"
+  },
+  "forceDarken": {
+    "message": "Всё равно затемнить"
+  },
+  "scopeGlobal": {
+    "message": "Глобально"
+  },
+  "scopeSite": {
+    "message": "Этот сайт"
+  },
+  "resetToGlobal": {
+    "message": "Сбросить к глобальным"
+  },
+  "styleLabel": {
+    "message": "Стиль"
+  },
+  "sliderBrightness": {
+    "message": "Яркость"
+  },
+  "sliderContrast": {
+    "message": "Контраст"
+  },
+  "sliderSepia": {
+    "message": "Сепия"
+  },
+  "sliderGrayscale": {
+    "message": "Оттенки серого"
+  },
+  "sliderImages": {
+    "message": "Приглушить изображения"
+  },
+  "globalOn": {
+    "message": "Включено везде"
+  },
+  "globalOff": {
+    "message": "Выключено везде"
+  },
+  "retry": {
+    "message": "Перезапустить"
+  },
+  "preset_graphite": {
+    "message": "Графит"
+  },
+  "preset_midnight": {
+    "message": "Глубокая ночь"
+  },
+  "preset_oled": {
+    "message": "OLED"
+  },
+  "preset_warm": {
+    "message": "Тёплый"
+  },
+  "preset_contrast": {
+    "message": "Высокий контраст"
+  },
+  "scopeLabel": {
+    "message": "Настройки применяются"
+  },
+  "globalToggleLabel": {
+    "message": "Поведение по умолчанию"
+  }
+}

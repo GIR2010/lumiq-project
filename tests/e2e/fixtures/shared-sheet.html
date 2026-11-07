@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>shared-sheet</title>
+<style>body { background: #fff; color: #111; font: 16px/1.5 sans-serif; }</style>
+</head>
+<body>
+<x-a></x-a>
+<x-b></x-b>
+<script>
+  // One constructed sheet adopted by two shadow roots.
+  const shared = new CSSStyleSheet();
+  shared.replaceSync('.inner{background:#fff}');
+  for (const tag of ['x-a', 'x-b']) {
+    customElements.define(tag, class extends HTMLElement {
+      constructor() {
+        super();
+        const root = this.attachShadow({ mode: 'open' });
+        root.adoptedStyleSheets = [shared];
+        root.innerHTML = '<div class="inner">Styled by a shared adopted sheet.</div>';
+      }
+    });
+  }
+</script>
+</body>
+</html>

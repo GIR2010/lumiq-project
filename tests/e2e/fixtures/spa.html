@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>spa</title>
+<style>body { background: #fff; color: #111; font: 16px/1.5 sans-serif; }</style>
+</head>
+<body>
+<div id="app">Loading…</div>
+<script>
+  setTimeout(() => {
+    const app = document.getElementById('app');
+    const late = document.createElement('div');
+    late.className = 'late';
+    late.setAttribute('style', 'background:#fff');
+    late.textContent = 'Added later with an inline style.';
+    const style = document.createElement('style');
+    style.textContent = '.late2{background-color:#fff}';
+    const late2 = document.createElement('div');
+    late2.className = 'late2';
+    late2.textContent = 'Added later, styled by a late <style>.';
+    document.head.appendChild(style);
+    app.append(late, late2);
+  }, 300);
+</script>
+</body>
+</html>

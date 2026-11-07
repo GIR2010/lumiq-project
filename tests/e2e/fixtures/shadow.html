@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>shadow</title>
+<style>body { background: #fff; color: #111; font: 16px/1.5 sans-serif; }</style>
+</head>
+<body>
+<x-card></x-card>
+<div class="adopted" id="adopted">Styled by an adopted stylesheet.</div>
+<script>
+  customElements.define('x-card', class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<style>:host div{background:#fff}</style><div class="inner">Inside an open shadow root.</div>';
+    }
+  });
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync('.adopted{background:#fff}');
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+</script>
+</body>
+</html>
