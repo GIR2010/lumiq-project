@@ -13,8 +13,7 @@ export function readRules(sheet: CSSStyleSheet): CSSRuleList | 'cross-origin' | 
   }
 }
 
-/** Parses CSS text in a detached document, so the page is unaffected. */
-/** Parses detached CSS; `baseUrl` (the file's URL) is the base its relative URLs resolve against. */
+/** Parses CSS text in a detached document, so the page is unaffected; relative URLs resolve against `baseUrl` (the file's URL). */
 export function parseCssText(text: string, baseUrl?: string): CSSRuleList {
   const doc = document.implementation.createHTMLDocument('');
   if (baseUrl) {
