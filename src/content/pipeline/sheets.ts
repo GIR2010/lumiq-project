@@ -1,4 +1,5 @@
 import { collectVarUsage, type VarRoleCounter } from '../../core/css/vars';
+import { SHORTHAND_ROLES } from '../../core/css/declarations';
 
 export function readRules(sheet: CSSStyleSheet): CSSRuleList | 'cross-origin' | 'pending' {
   try {
@@ -54,6 +55,19 @@ export function ruleHeader(rule: CSSRule): string {
   return t.slice(0, t.indexOf('{')).trim();
 }
 
+/**
+ * Colour shorthands declared with var(): Chrome leaves these unexpanded (their longhands read as
+ * empty), so they must be read and mirrored as shorthands.
+ */
+export function varShorthands(st: CSSStyleDeclaration): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (const prop of Object.keys(SHORTHAND_ROLES)) {
+    const value = st.getPropertyValue(prop);
+    if (value && value.toLowerCase().includes('var(')) out.push([prop, value]);
+  }
+  return out;
+}
+
 /** Counts `var()` usages by role; custom properties the rules define are added to `defs`. */
 export function countVarUsage(rules: CSSRuleList, counter: VarRoleCounter, defs?: Set<string>): void {
   for (const rule of Array.from(rules)) {
@@ -64,6 +78,7 @@ export function countVarUsage(rules: CSSRuleList, counter: VarRoleCounter, defs?
         if (defs && prop.startsWith('--')) defs.add(prop);
         collectVarUsage(prop, st.getPropertyValue(prop), counter);
       }
+      for (const [prop, value] of varShorthands(st)) collectVarUsage(prop, value, counter);
     } else if (isGroupingRule(rule)) {
       countVarUsage(rule.cssRules, counter, defs);
     }

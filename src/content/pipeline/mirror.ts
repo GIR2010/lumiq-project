@@ -2,7 +2,7 @@ import { parseColor } from '../../core/color';
 import { isLinkSelector, mapDeclarationValue, mapValueWithRole } from '../../core/css/declarations';
 import type { VarRoles } from '../../core/css/vars';
 import type { ColorFn, RuleContext } from '../../core/mapping/types';
-import { isGroupingRule, isStyleRule, ruleHeader } from './sheets';
+import { isGroupingRule, isStyleRule, ruleHeader, varShorthands } from './sheets';
 
 function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoles): string {
   const st = rule.style;
@@ -11,6 +11,12 @@ function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoles): string {
   const link = isLinkSelector(selector);
   const ctx: RuleContext = { selector, ...link, pairedBg: (bg && parseColor(bg)) || undefined };
   let body = '';
+  for (const [prop, value] of varShorthands(st)) {
+    const mapped = mapDeclarationValue(prop, value, fn, ctx);
+    if (mapped === null) continue;
+    const imp = st.getPropertyPriority(prop) === 'important' ? ' !important' : '';
+    body += `${prop}:${mapped}${imp};`;
+  }
   for (let i = 0; i < st.length; i++) {
     const prop = st.item(i);
     const value = st.getPropertyValue(prop);

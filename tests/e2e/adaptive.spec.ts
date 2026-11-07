@@ -192,3 +192,14 @@ test('repeated settings changes do not make a later stylesheet "heavy"', async (
   await expect.poll(() => bgL(page.locator('#later'))).toBeLessThan(DARK);
   expect(await tabStatus(sw, page)).not.toBe('heavy');
 });
+
+test('var() inside shorthands and color-mix() are darkened (translate.google.com patterns)', async ({ context }) => {
+  const page = await open(context, 'var-shorthand.html');
+  await expect.poll(() => bgL(page.locator('#bar'))).toBeLessThan(DARK);
+  // The fade gradient must no longer end in white.
+  await expect.poll(() => page.locator('#nav').evaluate((el) => getComputedStyle(el, '::after').backgroundImage))
+    .not.toContain('rgb(255, 255, 255)');
+  await expect.poll(() => page.locator('#box').evaluate((el) => getComputedStyle(el).borderTopColor))
+    .not.toBe('rgb(204, 204, 204)');
+  await expect.poll(() => textL(page.locator('#label'))).toBeGreaterThan(0.6);
+});

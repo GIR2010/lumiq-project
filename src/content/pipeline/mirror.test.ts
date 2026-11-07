@@ -21,3 +21,19 @@ test('кастомное свойство перекрашивается по р
 test('extractImports', () =>
   expect(extractImports(`@import url("x.css"); @import 'y.css' screen;`, 'https://a.com/css/main.css'))
     .toEqual(['https://a.com/css/x.css', 'https://a.com/css/y.css']));
+test('сокращение background с var() зеркалируется целиком (Chrome не раскладывает его на longhands)', () => {
+  // Emulates Chrome's CSSOM for `background: var(...)`: longhands are pending-substitution (''),
+  // the shorthand keeps the original text.
+  const decl = { background: 'var(--bar,var(--bg,#fff))', 'background-color': '', 'background-image': '' } as Record<string, string>;
+  const longhands = ['background-image', 'background-color'];
+  const style = {
+    length: longhands.length,
+    item: (i: number) => longhands[i],
+    getPropertyValue: (p: string) => decl[p] ?? '',
+    getPropertyPriority: () => '',
+  };
+  const rule = { selectorText: '.hdr', style, cssText: '.hdr { background: var(--bar,var(--bg,#fff)); }' };
+  Object.setPrototypeOf(rule, CSSStyleRule.prototype);
+  const css = buildMirrorCss([rule] as unknown as CSSRuleList, fn, new VarRoleCounter());
+  expect(css).toBe('.hdr{background:var(--bar,var(--bg,#111111));}');
+});

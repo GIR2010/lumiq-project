@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>var() shorthands and color-mix (translate.google.com patterns)</title>
+<style>
+  body { margin: 0; background: #fff; color: #111; }
+  /* Undefined custom properties: the fallbacks are what the page shows. */
+  #bar { background: var(--og-bar-background, var(--gm3-sys-color-background, #fff)); height: 40px; }
+  #nav { position: relative; height: 40px; }
+  #nav::after { content: ""; position: absolute; right: 0; top: 0; width: 32px; height: 40px;
+    background: linear-gradient(to right, transparent, var(--gm3-sys-color-surface, #fff)); }
+  #box { border: 2px solid var(--gm3-line, #ccc); height: 20px; }
+  #label { color: color-mix(in srgb, var(--gm3-sys-color-on-surface, #1f1f1f) 62%, transparent); }
+</style></head>
+<body>
+  <div id="bar">bar</div>
+  <nav id="nav">tabs</nav>
+  <div id="box"></div>
+  <div id="label">История</div>
+</body></html>

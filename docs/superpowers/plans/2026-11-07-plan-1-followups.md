@@ -79,3 +79,9 @@
 - Final review: parked — SW may remember older config if sends settle out of order — Ruling: real but unlikely (in-order listener); deferred, per-tab sequence later
 - Final review: parked — frame whose GET_CONFIG never reached SW recovers only on config change — Ruling: acceptable (rare)
 - Final review: parked — attachRoot rebuild of shared adopted sheet charged in load window — Ruling: cannot drop built sources; acceptable
+
+## После ручной проверки (translate.google.com)
+
+- Ruling (пересмотр решения Task 6): цвета внутри `color-mix()` теперь перекрашиваются по роли свойства. Прежнее «`color-mix` → null» оставляло тёмные подписи на тёмном фоне.
+- M13 подтверждено и исправлено для таблиц стилей: Chrome не раскладывает сокращения (`background`, `border*`, `outline`, `column-rule`, `text-decoration`) с `var()` на отдельные свойства; теперь они зеркалируются и учитываются в ролях переменных как сокращения (кроме `background` с `url(`).
+- Отложено: тот же случай в inline-атрибуте `style` (`style="background: var(--x,#fff)"`) — InlineStyler по-прежнему работает только с отдельными свойствами.

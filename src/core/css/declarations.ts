@@ -14,8 +14,22 @@ const entries: Array<[string, Role]> = [
 
 export const PROPERTY_ROLES: Readonly<Record<string, Role>> = Object.freeze(Object.fromEntries(entries));
 
+/**
+ * Colour-carrying shorthands. Chrome keeps a shorthand whose value contains var() unexpanded (its
+ * longhands read as empty), so such declarations are only reachable through the shorthand itself.
+ */
+const borderShorthands = ['border', 'border-color', ...['top', 'right', 'bottom', 'left', 'block', 'inline',
+  'block-start', 'block-end', 'inline-start', 'inline-end'].map((s) => `border-${s}`)];
+export const SHORTHAND_ROLES: Readonly<Record<string, Role>> = Object.freeze(Object.fromEntries<Role>([
+  ['background', 'bg'],
+  ...[...borderShorthands, 'outline', 'column-rule'].map((p): [string, Role] => [p, 'border']),
+  ['text-decoration', 'text'],
+]));
+
 export function roleOf(prop: string): Role | null {
-  return PROPERTY_ROLES[prop.trim().toLowerCase()] ?? null;
+  const p = prop.trim().toLowerCase();
+  return (Object.hasOwn(PROPERTY_ROLES, p) ? PROPERTY_ROLES[p] : null)
+    ?? (Object.hasOwn(SHORTHAND_ROLES, p) ? SHORTHAND_ROLES[p] : null);
 }
 
 const TOKEN = /#[0-9a-f]{3,8}\b|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\([^()]*\)|\b[a-z]+\b/gi;
@@ -104,11 +118,11 @@ function mapTokens(value: string, role: Role, fn: ColorFn, ctx: RuleContext): Ma
 
 /** Maps colors in `value` using an explicit role (e.g. for custom properties). Null when nothing changed. */
 export function mapValueWithRole(value: string, role: Role, fn: ColorFn, ctx: RuleContext, prop = ''): string | null {
-  if (value.toLowerCase().includes('color-mix(')) return null;
-  if (prop.trim().toLowerCase() === 'background-image') {
-    const v = value.toLowerCase();
-    if (v.includes('url(') || !v.includes('gradient(')) return null;
-  }
+  const p = prop.trim().toLowerCase();
+  const v = value.toLowerCase();
+  // Relative url()s would resolve against the page instead of the source sheet — leave those alone.
+  if ((p === 'background-image' || p === 'background') && v.includes('url(')) return null;
+  if (p === 'background-image' && !v.includes('gradient(')) return null;
   const r = mapTokens(value, role, fn, ctx);
   return r.changed ? r.text : null;
 }

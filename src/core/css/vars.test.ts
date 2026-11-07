@@ -21,3 +21,10 @@ test('VarRoleTable: счётчики по источникам, повторна
   expect(t.roleOf('--x')).toBe('text');
   t.clear(); expect(t.roleOf('--x')).toBe('bg');
 });
+test('сокращённые свойства с var() учитываются по своей роли', () => {
+  const c = new VarRoleCounter();
+  collectVarUsage('background', 'linear-gradient(to right,transparent,var(--surf,#fff))', c);
+  collectVarUsage('border', '1px solid var(--line)', c);
+  expect(c.roleOf('--surf')).toBe('bg');
+  expect(c.roleOf('--line')).toBe('border');
+});
