@@ -1,18 +1,49 @@
 import { parseColor } from '../../core/color';
-import { isLinkSelector, mapDeclarationValue, mapValueWithRole } from '../../core/css/declarations';
+import { isLinkSelector, mapDeclarationValue, mapValueWithRole, rewriteVarUses, twinName } from '../../core/css/declarations';
 import type { VarRoles } from '../../core/css/vars';
-import type { ColorFn, RuleContext } from '../../core/mapping/types';
+import type { ColorFn, Role, RuleContext } from '../../core/mapping/types';
 import { isGroupingRule, isStyleRule, ruleHeader, varShorthands } from './sheets';
 
-function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoles): string {
+const MASK_TEXT_PROPS = new Set(['background-color', 'background']);
+
+function recolorAndRewrite(value: string, role: Role, fn: ColorFn, ctx: RuleContext, vars: VarRoles, prop = ''): string | null {
+  const mapped = mapValueWithRole(value, role, fn, ctx, prop);
+  const rewritten = rewriteVarUses(mapped ?? value, role, (n) => vars.isMixed(n));
+  return rewritten ?? mapped;
+}
+
+/** Declarations (main value and, for mixed variables, per-role twins) for a custom property. */
+function customPropCss(prop: string, value: string, imp: string, fn: ColorFn, ctx: RuleContext, vars: VarRoles): string {
+  let out = '';
+  const main = recolorAndRewrite(value, vars.roleOf(prop), fn, ctx, vars);
+  if (main !== null) out += `${prop}:${main}${imp};`;
+  if (!vars.isMixed(prop)) return out;
+  const hasVar = /var\(/i.test(value);
+  for (const role of vars.rolesOf(prop)) {
+    const recolored = mapValueWithRole(value, role, fn, ctx);
+    if (recolored === null && !hasVar) continue;
+    const twin = recolorAndRewrite(value, role, fn, ctx, vars) ?? value;
+    out += `${twinName(prop, role)}:${twin}${imp};`;
+  }
+  return out;
+}
+
+function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoles, isMask?: (selector: string) => boolean): string {
   const st = rule.style;
   const selector = rule.selectorText;
   const bg = st.getPropertyValue('background-color');
   const link = isLinkSelector(selector);
-  const ctx: RuleContext = { selector, ...link, pairedBg: (bg && parseColor(bg)) || undefined };
+  const asMask = isMask?.(selector) ?? false;
+  const ctx: RuleContext = { selector, ...link, pairedBg: (bg && parseColor(bg)) || undefined,
+    // Closures: the table's methods rely on `this`, but consumers call them detached.
+    vars: { roleOf: (n) => vars.roleOf(n), isMixed: (n) => vars.isMixed(n) } };
+  const mapProp = (prop: string, value: string): string | null =>
+    asMask && MASK_TEXT_PROPS.has(prop)
+      ? recolorAndRewrite(value, 'text', fn, ctx, vars, prop)
+      : mapDeclarationValue(prop, value, fn, ctx);
   let body = '';
   for (const [prop, value] of varShorthands(st)) {
-    const mapped = mapDeclarationValue(prop, value, fn, ctx);
+    const mapped = mapProp(prop, value);
     if (mapped === null) continue;
     const imp = st.getPropertyPriority(prop) === 'important' ? ' !important' : '';
     body += `${prop}:${mapped}${imp};`;
@@ -20,23 +51,25 @@ function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoles): string {
   for (let i = 0; i < st.length; i++) {
     const prop = st.item(i);
     const value = st.getPropertyValue(prop);
-    const mapped = prop.startsWith('--')
-      ? mapValueWithRole(value, vars.roleOf(prop), fn, ctx)
-      : mapDeclarationValue(prop, value, fn, ctx);
-    if (mapped === null) continue;
     const imp = st.getPropertyPriority(prop) === 'important' ? ' !important' : '';
+    if (prop.startsWith('--')) {
+      body += customPropCss(prop, value, imp, fn, ctx, vars);
+      continue;
+    }
+    const mapped = mapProp(prop, value);
+    if (mapped === null) continue;
     body += `${prop}:${mapped}${imp};`;
   }
   return body ? `${selector}{${body}}` : '';
 }
 
-export function buildMirrorCss(rules: CSSRuleList, fn: ColorFn, vars: VarRoles): string {
+export function buildMirrorCss(rules: CSSRuleList, fn: ColorFn, vars: VarRoles, isMask?: (selector: string) => boolean): string {
   let out = '';
   for (const rule of Array.from(rules)) {
     if (isStyleRule(rule)) {
-      out += styleRuleCss(rule, fn, vars);
+      out += styleRuleCss(rule, fn, vars, isMask);
     } else if (isGroupingRule(rule)) {
-      const inner = buildMirrorCss(rule.cssRules, fn, vars);
+      const inner = buildMirrorCss(rule.cssRules, fn, vars, isMask);
       if (inner) out += `${ruleHeader(rule)}{${inner}}`;
     }
   }

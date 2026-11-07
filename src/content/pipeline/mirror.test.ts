@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { expect, test } from 'vitest';
 import type { ColorFn } from '../../core/mapping/types';
-import { VarRoleCounter } from '../../core/css/vars';
+import { VarRoleCounter, type VarRoles } from '../../core/css/vars';
 import { buildMirrorCss } from './mirror';
 import { parseCssText, countVarUsage, extractImports } from './sheets';
 
@@ -36,4 +36,45 @@ test('сокращение background с var() зеркалируется цел
   Object.setPrototypeOf(rule, CSSStyleRule.prototype);
   const css = buildMirrorCss([rule] as unknown as CSSRuleList, fn, new VarRoleCounter());
   expect(css).toBe('.hdr{background:var(--bar,var(--bg,#111111));}');
+});
+
+type StubMap = Record<string, { roles: Array<'bg' | 'text' | 'border' | 'shadow'> }>;
+function stub(map: StubMap): VarRoles {
+  return {
+    roleOf: (n: string) => map[n]?.roles[0] ?? 'bg',
+    rolesOf: (n: string) => map[n]?.roles ?? [],
+    isMixed: (n: string) => (map[n]?.roles.length ?? 0) > 1,
+  } as unknown as VarRoles;
+}
+test('смешанная переменная: основное значение + двойники по ролям', () => {
+  const css = buildMirrorCss(parseCssText(':root{--white:#fff}'), fn, stub({ '--white': { roles: ['bg', 'text'] } }));
+  expect(css).toBe(':root{--white:#111111;--white__dx-bg:#111111;--white__dx-text:#eeeeee;}');
+});
+test('использование смешанной переменной переписывается даже без литеральных цветов', () => {
+  const css = buildMirrorCss(parseCssText('.i{color:var(--white)}'), fn, stub({ '--white': { roles: ['bg', 'text'] } }));
+  expect(css).toBe('.i{color:var(--white__dx-text, var(--white));}');
+});
+test('несколько определений одной переменной (светлая/тёмная тема) — двойники у каждого', () => {
+  const css = buildMirrorCss(parseCssText(':root{--c:#fff}.dark{--c:#000}'), fn, stub({ '--c': { roles: ['bg', 'text'] } }));
+  expect(css).toContain(':root{--c:'); expect(css).toContain('.dark{--c:'); expect((css.match(/--c__dx-text/g) ?? []).length).toBe(2);
+});
+test('числовая переменная не получает двойников и не ломается', () => {
+  const css = buildMirrorCss(parseCssText(':root{--su1:clamp(1px,calc(1px*1),calc(1px*1))}'), fn, stub({ '--su1': { roles: ['bg', 'text'] } }));
+  expect(css).toBe('');
+});
+test('цепочка: --b:var(--a) для смешанной --a → переписывается по роли --b', () => {
+  const css = buildMirrorCss(parseCssText(':root{--b:var(--a)}'), fn, stub({ '--a': { roles: ['bg', 'text'] }, '--b': { roles: ['text'] } }));
+  expect(css).toBe(':root{--b:var(--a__dx-text, var(--a));}');
+});
+test('isMask: background-color правила считается цветом значка (роль text)', () => {
+  const css = buildMirrorCss(parseCssText('.ic{background-color:#404244}'), fn, stub({}), (s) => s === '.ic');
+  expect(css).toBe('.ic{background-color:#eeeeee;}');
+});
+test('isMask: var() смешанной переменной в background-color переписывается по роли text', () => {
+  const css = buildMirrorCss(parseCssText('.ic{background-color:var(--w)}'), fn, stub({ '--w': { roles: ['bg', 'text'] } }), (s) => s === '.ic');
+  expect(css).toBe('.ic{background-color:var(--w__dx-text, var(--w));}');
+});
+test('двойники сохраняют !important', () => {
+  const css = buildMirrorCss(parseCssText(':root{--w:#fff!important}'), fn, stub({ '--w': { roles: ['bg', 'text'] } }));
+  expect(css).toBe(':root{--w:#111111 !important;--w__dx-bg:#111111 !important;--w__dx-text:#eeeeee !important;}');
 });
