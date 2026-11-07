@@ -5,6 +5,9 @@ import type { ColorMapper, Role, RuleContext } from './types';
 const BG_OFFSET_MIN = 0.06;
 const BG_DARK_CAP = BG_OFFSET_MIN; // meets the upper branch at L_in = 0.5 (continuity)
 const BG_MAX_CHROMA = 0.12;
+const SAT_CHROMA = 0.10;
+const SAT_L_MIN = 0.25;
+const SAT_L_MAX = 0.65;
 const SHADOW_L = 0.3;
 const SHADOW_ALPHA = 0.6;
 const DEFAULT_LINK_TOLERANCE = 0.01;
@@ -57,6 +60,10 @@ export function createAdaptiveMapper(colors: StyleColors): ColorMapper {
       if (role === 'text' && ctx.isLink && (isNeutral(color) || isBrowserDefaultLink(color))) {
         const t = ctx.isVisited ? linkVisited : link;
         return { ...t, alpha: color.alpha };
+      }
+      if (role === 'bg' && color.c > SAT_CHROMA && color.l >= SAT_L_MIN) {
+        // Saturated mid-tone backgrounds (brand blues etc.) keep their colour; only too-light ones are lowered.
+        return { ...color, l: Math.min(color.l, SAT_L_MAX) };
       }
       const l = clamp01(lightness(color.l, role));
       const alpha = role === 'shadow' ? color.alpha * SHADOW_ALPHA : color.alpha;

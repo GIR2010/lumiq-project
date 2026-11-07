@@ -27,8 +27,8 @@ describe('adaptive mapper', () => {
     const src = parseColor('#cfe3ff')!;
     expect(Math.abs(m.map(src, 'bg', ctx).h - src.h)).toBeLessThan(3);
   });
-  test('насыщенность фона ≤ 0.12', () =>
-    expect(m.map(parseColor('#ffeb3b')!, 'bg', ctx).c).toBeLessThanOrEqual(0.12 + 1e-6));
+  test('насыщенность тёмного фона ≤ 0.12 (светлые насыщенные не меняются, см. «насыщенные фоны»)', () =>
+    expect(m.map(parseColor('#1e0058')!, 'bg', ctx).c).toBeLessThanOrEqual(0.12 + 1e-6));
   test('монотонность фона: светлее на входе → не светлее на выходе (1000 случайных пар)', () => {
     const rnd = mulberry32(42);
     for (let i = 0; i < 1000; i++) {
@@ -73,5 +73,29 @@ describe('adaptive mapper', () => {
       const a = i / 100, b = (i + 1) / 100;
       if (a >= lo) expect(at(b)).toBeLessThanOrEqual(at(a) + 1e-9);
     }
+  });
+});
+
+describe('насыщенные фоны', () => {
+  test('насыщенный средний синий фон не меняется (#005bff)', () => {
+    const src = parseColor('#005bff')!;
+    const out = m.map(src, 'bg', ctx);
+    expect(out.l).toBeCloseTo(src.l, 3); expect(out.c).toBeCloseTo(src.c, 3); expect(out.h).toBeCloseTo(src.h, 1);
+  });
+  test('насыщенный слишком светлый фон опускается до L=0.65 с тем же оттенком', () => {
+    const src = parseColor('#00aaff')!;
+    const out = m.map(src, 'bg', ctx);
+    expect(out.l).toBeCloseTo(0.65, 2); expect(out.c).toBeCloseTo(src.c, 2);
+  });
+  test('малонасыщенные и нейтральные фоны — как раньше', () => {
+    expect(formatColor(m.map(parseColor('#ffffff')!, 'bg', ctx))).toBe(C.bg);
+    expect(m.map(parseColor('#e8eef7')!, 'bg', ctx).l).toBeLessThan(0.3);
+  });
+  test('альфа насыщенного фона сохраняется', () => {
+    expect(m.map({ ...parseColor('#005bff')!, alpha: 0.4 }, 'bg', ctx).alpha).toBeCloseTo(0.4);
+  });
+  test('другие роли насыщенных цветов не затронуты', () => {
+    const src = parseColor('#005bff')!;
+    expect(m.map(src, 'text', ctx).l).toBeGreaterThanOrEqual(parseColor(C.textMuted)!.l - 1e-6);
   });
 });
