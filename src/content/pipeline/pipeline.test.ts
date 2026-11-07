@@ -338,23 +338,23 @@ test('C1: переменные из листа, загруженного ран�
 
 test('C1: удаление листа-пользователя возвращает роль по умолчанию и перестраивает лист с определением', async () => {
   const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
-  const tokens = style(':root{--fg:#101114}');
-  const usage = style('body{color:var(--fg)}');
+  const tokens = style(':root{--ink:#101114}');
+  const usage = style('body{color:var(--ink)}');
   await frame();
-  expect(varIn(tokens, '--fg').l).toBeGreaterThan(0.75);
+  expect(varIn(tokens, '--ink').l).toBeGreaterThan(0.75);
   usage.remove();
   await frame();
-  expect(varIn(tokens, '--fg').l).toBeLessThan(0.3); // bg again
+  expect(varIn(tokens, '--ink').l).toBeLessThan(0.3); // bg again
 });
 
 test('C1: кросс-доменный лист с переменными, пришедший до листа-пользователя', async () => {
   const link = crossOriginLink('https://cdn.example/tokens.css');
-  const p = createPipeline(document, { fetchCss: vi.fn(async () => ':root{--fg:#111111}') }); p.start(cfg());
+  const p = createPipeline(document, { fetchCss: vi.fn(async () => ':root{--ink:#111111}') }); p.start(cfg());
   await settle();
-  expect(varIn(link, '--fg').l).toBeLessThan(0.3);
-  style('p{color:var(--fg)}');
+  expect(varIn(link, '--ink').l).toBeLessThan(0.3);
+  style('p{color:var(--ink)}');
   await frame();
-  expect(varIn(link, '--fg').l).toBeGreaterThan(0.75);
+  expect(varIn(link, '--ink').l).toBeGreaterThan(0.75);
 });
 
 test('I5: 50 вызовов refreshSheet одного листа в пределах кадра → одна перестройка', async () => {
