@@ -1,5 +1,6 @@
 import { collectVarUsage, type VarLinks, type VarRoleCounter } from '../../core/css/vars';
 import { SHORTHAND_ROLES } from '../../core/css/declarations';
+import { IMAGE_PROPS, singleImageUrl } from '../../core/css/image-urls';
 
 export function readRules(sheet: CSSStyleSheet): CSSRuleList | 'cross-origin' | 'pending' {
   try {
@@ -122,4 +123,64 @@ export function countVarUsage(
       countVarUsage(rule.cssRules, counter, defs, links, isMask);
     }
   }
+}
+
+/** One swappable image url() found in a declaration block. */
+export interface ImageDecl {
+  /** Property to emit in the mirror (shorthands map to their image longhand). */
+  outProp: string;
+  /** Raw url text as written in the declaration. */
+  raw: string;
+  /** Absolute URL: the key for icon lookups. */
+  abs: string;
+  /** Full declared value. */
+  value: string;
+  important: boolean;
+  /** The url was found in a shorthand (other parts of the value must not be re-emitted). */
+  shorthand: boolean;
+}
+
+const IMAGE_LONGHAND: Record<string, string> = { background: 'background-image', 'list-style': 'list-style-image' };
+
+/** Base URL for resolving relative urls of a rule: its sheet's href, else the owner document's base. */
+export function ruleBase(rule: CSSRule): string {
+  const sheet = rule.parentStyleSheet;
+  if (sheet?.href) return sheet.href;
+  const owner = (sheet?.ownerNode as Node | null | undefined)?.ownerDocument;
+  return owner?.baseURI ?? document.baseURI;
+}
+
+/** Single-url image declarations of a block; a shorthand is skipped when its image longhand is set. */
+export function imageDecls(st: CSSStyleDeclaration, base: string): ImageDecl[] {
+  const out: ImageDecl[] = [];
+  for (const prop of IMAGE_PROPS) {
+    const outProp = IMAGE_LONGHAND[prop] ?? prop;
+    const shorthand = outProp !== prop;
+    if (shorthand && st.getPropertyValue(outProp)) continue;
+    const value = st.getPropertyValue(prop);
+    if (!value) continue;
+    const raw = singleImageUrl(prop, value);
+    if (raw === null) continue;
+    let abs: string;
+    try {
+      abs = new URL(raw, base).href;
+    } catch {
+      continue;
+    }
+    out.push({ outProp, raw, abs, value, important: st.getPropertyPriority(prop) === 'important', shorthand });
+  }
+  return out;
+}
+
+/** Absolute URLs of single-image declarations (nested grouping rules included), de-duplicated. */
+export function collectImageUrls(rules: CSSRuleList, base: string): string[] {
+  const found = new Set<string>();
+  const walk = (list: CSSRuleList): void => {
+    for (const rule of Array.from(list)) {
+      if (isStyleRule(rule)) for (const d of imageDecls(rule.style, base)) found.add(d.abs);
+      else if (isGroupingRule(rule)) walk(rule.cssRules);
+    }
+  };
+  walk(rules);
+  return [...found];
 }

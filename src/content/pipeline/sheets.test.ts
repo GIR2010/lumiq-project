@@ -67,3 +67,9 @@ test('R19: countVarUsage вызывает isMask только для прави�
   countVarUsage(parseCssText('.a{color:var(--x)}.b{background-color:var(--x)}.c{width:1px}'), new VarRoleCounter(), undefined, undefined, isMask);
   expect(seen).toEqual(['.b']);
 });
+
+import { collectImageUrls } from './sheets';
+test('collectImageUrls: @media, относительные, без градиентов/слоёв, без дублей', () => {
+  const rules = parseCssText('.a{background-image:url(a.png)}@media (min-width:1px){.b{list-style:url(/b.gif) inside}}.c{background:linear-gradient(red,blue)}.d{background-image:url(x.png),url(y.png)}.e{background:url(a.png)}.f{content:url(c.svg)}');
+  expect(collectImageUrls(rules, 'https://s.com/css/m.css').sort()).toEqual(['https://s.com/b.gif', 'https://s.com/css/a.png', 'https://s.com/css/c.svg']);
+});

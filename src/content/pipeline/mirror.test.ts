@@ -100,3 +100,34 @@ test('R19: isMask вызывается только для правил с фо�
   buildMirrorCss(parseCssText('.a{color:#000}.b{background-color:#fff}.c{background:#fff}.d{--x:#fff}'), fn, stub({}), isMask);
   expect(seen).toEqual(['.b', '.c']);
 });
+
+const A = 'data:image/png;base64,AA';
+const icons = (u: string): string | undefined => (u.endsWith('a.gif') || u.endsWith('a.png') ? A : undefined);
+test('значок: list-style-image заменяется копией', () => {
+  const css = buildMirrorCss(parseCssText('li{list-style-image:url(a.gif)}'), fn, new VarRoleCounter(), undefined, icons);
+  expect(css).toBe(`li{list-style-image:url("${A}");}`);
+});
+test('значок: background-сокращение даёт только longhand background-image', () => {
+  const css = buildMirrorCss(parseCssText('.i{background:url(a.png) no-repeat 0 0}'), fn, new VarRoleCounter(), undefined, icons);
+  expect(css).toContain(`background-image:url("${A}");`);
+  expect(css).not.toMatch(/background:/);
+  expect((css.match(/background-image/g) ?? []).length).toBe(1);
+});
+test('значок: !important, content, вложенный @media, цвет в том же правиле', () => {
+  const css = buildMirrorCss(parseCssText('@media (min-width:1px){.i{color:#000;background-image:url(a.png)!important}}.c::before{content:url(a.png)}'),
+    fn, new VarRoleCounter(), undefined, icons);
+  expect(css).toMatch(/\.i\{color:#eeeeee;background-image:url\("data:image\/png;base64,AA"\) !important;\}/);
+  expect(css).toContain(`.c::before{content:url("${A}");}`);
+});
+test('значок: слои, градиенты, не-значки и отсутствие icons не трогаются', () => {
+  const src = '.a{background-image:url(a.png),url(b.png)}.c{background-image:url(b.png)}.d{background-image:url(a.png)}';
+  const rules = parseCssText(src);
+  const css = buildMirrorCss(rules, fn, new VarRoleCounter(), undefined, icons);
+  expect(css).toBe(`.d{background-image:url("${A}");}`);
+  expect(buildMirrorCss(rules, fn, new VarRoleCounter())).toBe('');
+});
+test('значок: относительный URL разрешается относительно документа', () => {
+  const seen: string[] = [];
+  buildMirrorCss(parseCssText('.i{background-image:url(img/x.png)}'), fn, new VarRoleCounter(), undefined, (u) => { seen.push(u); return undefined; });
+  expect(seen).toEqual([new URL('img/x.png', document.baseURI).href]);
+});

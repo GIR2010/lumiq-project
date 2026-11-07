@@ -2,7 +2,11 @@ import { parseColor } from '../../core/color';
 import { isLinkSelector, mapDeclarationValue, mapValueWithRole, rewriteVarUses, twinName } from '../../core/css/declarations';
 import type { VarRoles } from '../../core/css/vars';
 import type { ColorFn, Role, RuleContext } from '../../core/mapping/types';
-import { declaresBackground, isGroupingRule, isStyleRule, ruleHeader, varShorthands } from './sheets';
+import { replaceImageUrl } from '../../core/css/image-urls';
+import { declaresBackground, imageDecls, isGroupingRule, isStyleRule, ruleBase, ruleHeader, varShorthands } from './sheets';
+
+/** URL → inverted data: copy, when the image is a dark icon. */
+export type IconLookup = (url: string) => string | undefined;
 
 const MASK_TEXT_PROPS = new Set(['background-color', 'background']);
 /** Colour and CSS-wide keywords: an override with one of these must shadow the inherited twins too. */
@@ -30,7 +34,7 @@ function customPropCss(prop: string, value: string, imp: string, fn: ColorFn, ct
   return out;
 }
 
-function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoles, isMask?: (selector: string) => boolean): string {
+function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoles, isMask?: (selector: string) => boolean, icons?: IconLookup): string {
   const st = rule.style;
   const selector = rule.selectorText;
   const bg = st.getPropertyValue('background-color');
@@ -62,16 +66,25 @@ function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoles, isMask?: 
     if (mapped === null) continue;
     body += `${prop}:${mapped}${imp};`;
   }
+  if (icons) {
+    for (const d of imageDecls(st, ruleBase(rule))) {
+      const copy = icons(d.abs);
+      if (!copy) continue;
+      // A shorthand is never re-emitted (it would reset colours the mirror sets): only its image longhand.
+      const value = replaceImageUrl(d.shorthand ? `url("${d.raw.replace(/[\\"]/g, '\$&')}")` : d.value, d.raw, copy);
+      body += `${d.outProp}:${value}${d.important ? ' !important' : ''};`;
+    }
+  }
   return body ? `${selector}{${body}}` : '';
 }
 
-export function buildMirrorCss(rules: CSSRuleList, fn: ColorFn, vars: VarRoles, isMask?: (selector: string) => boolean): string {
+export function buildMirrorCss(rules: CSSRuleList, fn: ColorFn, vars: VarRoles, isMask?: (selector: string) => boolean, icons?: IconLookup): string {
   let out = '';
   for (const rule of Array.from(rules)) {
     if (isStyleRule(rule)) {
-      out += styleRuleCss(rule, fn, vars, isMask);
+      out += styleRuleCss(rule, fn, vars, isMask, icons);
     } else if (isGroupingRule(rule)) {
-      const inner = buildMirrorCss(rule.cssRules, fn, vars, isMask);
+      const inner = buildMirrorCss(rule.cssRules, fn, vars, isMask, icons);
       if (inner) out += `${ruleHeader(rule)}{${inner}}`;
     }
   }
