@@ -134,3 +134,11 @@ test('custom properties defined in an earlier (cross-origin) sheet than the one 
   await expect.poll(() => bodyBg(page)).toBeLessThan(DARK);
   await expect.poll(() => textL(page.locator('#text'))).toBeGreaterThan(LIGHT_TEXT);
 });
+
+test('CSS-in-JS: 5 000 rules inserted over several frames end up dark', async ({ context, sw }) => {
+  const page = await open(context, 'css-in-js-heavy.html');
+  await page.waitForFunction(() => document.body.dataset.done === '1');
+  await expect.poll(() => bgL(page.locator('#last')), { timeout: 3000 }).toBeLessThan(DARK);
+  await expect.poll(() => bgL(page.locator('#first')), { timeout: 3000 }).toBeLessThan(DARK);
+  expect(await tabStatus(sw, page)).not.toBe('heavy');
+});

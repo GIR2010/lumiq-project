@@ -74,6 +74,8 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   const varDefs = new Map<Source, Set<string>>();
   /** Mirrored sources whose variables changed role: rebuilt once, at the end of the frame. */
   const pendingRebuild = new Set<Source>();
+  /** Sheets reported changed (CSS-in-JS): re-processed once per frame. */
+  const pendingRefresh = new Set<CSSStyleSheet>();
   let cancelFrame: (() => void) | null = null;
   const now = deps.now ?? (() => performance.now());
 
@@ -197,6 +199,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   function flushFrame(): void {
     cancelFrame = null;
     if (!running) return;
+    const sheets = [...pendingRefresh];
+    pendingRefresh.clear();
+    sheets.forEach(refreshNow);
     flushRebuilds();
   }
 
@@ -510,6 +515,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     vars.clear();
     varDefs.clear();
     pendingRebuild.clear();
+    pendingRefresh.clear();
     cancelFrame?.();
     cancelFrame = null;
   }
@@ -531,20 +537,25 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     if (running) guard(() => attachRoot(root));
   }
 
+  function refreshNow(sheet: CSSStyleSheet): void {
+    if (!running || ownSheets.has(sheet)) return;
+    const node = sheet.ownerNode;
+    if (node) {
+      if (node.nodeType !== Node.ELEMENT_NODE || isOwnNode(node) || !node.isConnected) return;
+      processNow(resolve(node as Element, node.getRootNode() as Root));
+      return;
+    }
+    const all: Root[] = [doc, ...roots];
+    all.forEach(pruneAdopted);
+    const root = all.find((r) => r.adoptedStyleSheets.includes(sheet));
+    if (root) processNow(resolve(sheet, root));
+  }
+
+  /** Coalesced: however often a sheet is reported within a frame, it is re-processed once. */
   function refreshSheet(sheet: CSSStyleSheet): void {
-    guard(() => {
-      if (!running || ownSheets.has(sheet)) return;
-      const node = sheet.ownerNode;
-      if (node) {
-        if (node.nodeType !== Node.ELEMENT_NODE || isOwnNode(node) || !node.isConnected) return;
-        processNow(resolve(node as Element, node.getRootNode() as Root));
-        return;
-      }
-      const all: Root[] = [doc, ...roots];
-      all.forEach(pruneAdopted);
-      const root = all.find((r) => r.adoptedStyleSheets.includes(sheet));
-      if (root) processNow(resolve(sheet, root));
-    });
+    if (!running || ownSheets.has(sheet)) return;
+    pendingRefresh.add(sheet);
+    requestFrame();
   }
 
   return {

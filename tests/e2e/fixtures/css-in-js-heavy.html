@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>css-in-js-heavy</title>
+<style>body { background: #fff; color: #111; font: 16px/1.5 sans-serif; }</style>
+<style id="runtime"></style>
+</head>
+<body>
+<div class="r0" id="first">First runtime rule.</div>
+<div class="r4999" id="last">Last runtime rule.</div>
+<script>
+  // 5 000 rules inserted one by one with insertRule, 250 per frame (like a CSS-in-JS library).
+  const sheet = document.getElementById('runtime').sheet;
+  let i = 0;
+  const step = () => {
+    for (const end = Math.min(i + 250, 5000); i < end; i++) {
+      sheet.insertRule(`.r${i}{background-color:#fff;color:#111}`, sheet.cssRules.length);
+    }
+    if (i < 5000) requestAnimationFrame(step);
+    else document.body.dataset.done = '1';
+  };
+  requestAnimationFrame(step);
+</script>
+</body>
+</html>

@@ -184,6 +184,7 @@ test('addRoot: <style> и adoptedStyleSheets shadow root, refreshSheet, detach �
   expect(mirrorText()).toContain('.ad');
   adopted.replaceSync('.ad2{color:#000}');
   p.refreshSheet(adopted);
+  await frame(); // refreshes are coalesced per frame
   expect(root.adoptedStyleSheets.length).toBe(2);
   expect(mirrorText()).toContain('.ad2');
   p.refreshSheet(root.adoptedStyleSheets[1]); // our own mirror is ignored
@@ -329,4 +330,30 @@ test('C1: кросс-доменный лист с переменными, при
   style('p{color:var(--fg)}');
   await frame();
   expect(varIn(link, '--fg').l).toBeGreaterThan(0.75);
+});
+
+test('I5: 50 вызовов refreshSheet одного листа в пределах кадра → одна перестройка', async () => {
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  const s = document.querySelector('style:not([data-darkext])') as HTMLStyleElement;
+  const mirror = mirrorOf(s)!;
+  let rewrites = 0;
+  const mo = new MutationObserver((recs) => { rewrites += recs.length; });
+  mo.observe(mirror, { childList: true, characterData: true, subtree: true });
+  s.sheet!.insertRule('.added{background-color:#fff}', s.sheet!.cssRules.length);
+  for (let i = 0; i < 50; i++) p.refreshSheet(s.sheet!);
+  await frame();
+  mo.disconnect();
+  expect(mirror.textContent).toContain('.added{');
+  expect(rewrites).toBe(1);
+});
+
+test('I5: повторный refreshSheet неизменного листа не меняет счёт ролей переменных', async () => {
+  const p = createPipeline(document, { fetchCss: vi.fn() });
+  const tokens = style(':root{--x:#ffffff}');
+  const usesAsText = style('p{color:var(--x)}');
+  style('div{background-color:var(--x)}span{background-color:var(--x)}'); // bg 2 : text 1
+  p.start(cfg());
+  expect(varIn(tokens, '--x').l).toBeLessThan(0.3);
+  for (let i = 0; i < 3; i++) { p.refreshSheet(usesAsText.sheet!); await frame(); }
+  expect(varIn(tokens, '--x').l).toBeLessThan(0.3); // still bg: counts were replaced, not added
 });
