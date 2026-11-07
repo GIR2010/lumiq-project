@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>css-in-js</title>
+<style>body { background: #fff; color: #111; font: 16px/1.5 sans-serif; }</style>
+<style id="runtime"></style>
+</head>
+<body>
+<div class="dyn" id="dyn">Styled by a rule inserted at runtime.</div>
+<script>
+  setTimeout(() => {
+    const sheet = document.getElementById('runtime').sheet;
+    sheet.insertRule('.dyn{background-color:#fff}', sheet.cssRules.length);
+  }, 300);
+</script>
+</body>
+</html>
