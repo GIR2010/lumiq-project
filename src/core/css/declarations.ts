@@ -281,7 +281,8 @@ export function mapDeclarationValue(prop: string, value: string, fn: ColorFn, ct
   if (!role) return null;
   const mapped = mapValueWithRole(value, role, fn, ctx, prop);
   if (!ctx.vars) return mapped;
-  const rewritten = rewriteVarUses(mapped ?? value, role, ctx.vars.isMixed);
+  const vars = ctx.vars;
+  const rewritten = rewriteVarUses(mapped ?? value, role, (n) => vars.isMixed(n));
   return rewritten ?? mapped;
 }
 

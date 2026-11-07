@@ -88,3 +88,12 @@ test('fallback с цветом и смешанная переменная: об�
   const c = { ...ctx, vars: { roleOf: () => 'text' as const, isMixed: mixed } };
   expect(mapDeclarationValue('color', 'var(--white, #000)', fn, c)).toBe('var(--white__dx-text, var(--white, #eeeeee))');
 });
+test('ctx.vars с методами, зависящими от this, работает напрямую (isMixed не отрывается от объекта)', () => {
+  class ThisBound {
+    private readonly mixedNames = new Set(['--white']);
+    roleOf(): 'text' { return 'text'; }
+    isMixed(name: string): boolean { return this.mixedNames.has(name); }
+  }
+  const c = { ...ctx, vars: new ThisBound() };
+  expect(mapDeclarationValue('color', 'var(--white)', fn, c)).toBe('var(--white__dx-text, var(--white))');
+});
