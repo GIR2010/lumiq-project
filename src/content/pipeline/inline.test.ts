@@ -144,3 +144,44 @@ test('правка страницы после нашей записи по-пр
   expect(d.style.width).toBe('10px');
   expect(d.style.getPropertyValue('--x-color')).toBe('var(--icon)');
 });
+
+// jsdom (like Chrome) cannot hold `background: var(--x)` next to a longhand and read it back, so the
+// shorthand's value is faked on the element's style object; the real CSSOM then shows what stays effective.
+function withVarShorthand(): { d: HTMLElement; writes: string[] } {
+  document.body.innerHTML = '<div id="d" style="background-color:#fff"></div>';
+  const d = document.getElementById('d')!;
+  const real = d.style.getPropertyValue.bind(d.style);
+  d.style.getPropertyValue = (p: string) => (p === 'background' ? 'var(--icon)' : real(p));
+  const realSet = d.style.setProperty.bind(d.style);
+  const writes: string[] = [];
+  d.style.setProperty = (p: string, v: string | null, pr?: string) => { writes.push(p); realSet(p, v, pr); };
+  return { d, writes };
+}
+
+test('var()-сокращение пишется раньше longhand: перекрашенный background-color остаётся действующим', () => {
+  const { d, writes } = withVarShorthand();
+  new InlineStyler().apply(d, fn, vars);
+  expect(writes).toEqual(['background', 'background-color']);
+  expect(d.style.getPropertyValue('background-color')).toBe('rgb(17, 17, 17)');
+});
+
+test('restoreAll после правки страницы: сокращение возвращается раньше longhand, longhand действует', () => {
+  const { d, writes } = withVarShorthand();
+  const s = new InlineStyler();
+  s.apply(d, fn, vars);
+  writes.length = 0;
+  d.style.width = '10px';
+  s.restoreAll();
+  expect(writes).toEqual(['background', 'background-color']);
+  expect(d.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+  expect(d.style.width).toBe('10px');
+});
+
+test('повторный apply идемпотентен: двойник не вкладывается', () => {
+  document.body.innerHTML = '<div id="d" style="color: var(--icon)"></div>';
+  const s = new InlineStyler(); const d = document.getElementById('d')!;
+  s.apply(d, fn, vars); s.apply(d, fn, vars);
+  const v = d.style.getPropertyValue('color');
+  expect(v).toBe('var(--icon__dx-text, var(--icon))');
+  expect(v).not.toContain('var(--icon__dx-text, var(--icon__dx-text');
+});

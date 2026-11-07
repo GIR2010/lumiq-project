@@ -1,5 +1,5 @@
 import { parseColor } from '../../core/color';
-import { isLinkSelector, mapDeclarationValue, mapValueWithRole, PROPERTY_ROLES, rewriteVarUses } from '../../core/css/declarations';
+import { isLinkSelector, mapDeclarationValue, mapValueWithRole, PROPERTY_ROLES, rewriteVarUses, SHORTHAND_ROLES } from '../../core/css/declarations';
 import type { VarRoles } from '../../core/css/vars';
 import type { ColorFn, RuleContext } from '../../core/mapping/types';
 import { varShorthands } from './sheets';
@@ -20,6 +20,8 @@ const declOf = (st: CSSStyleDeclaration, prop: string): Decl => ({
 
 const sameDecl = (st: CSSStyleDeclaration, prop: string, d: Decl): boolean =>
   st.getPropertyValue(prop) === d.value && st.getPropertyPriority(prop) === d.priority;
+
+const shorthandRank = (prop: string): number => (Object.hasOwn(SHORTHAND_ROLES, prop) ? 0 : 1);
 
 export class InlineStyler {
   private touches = new Map<Element, Touch>();
@@ -44,6 +46,7 @@ export class InlineStyler {
     const bg = touch?.props.get('background-color')?.orig.value ?? st.getPropertyValue('background-color');
     const ctx: RuleContext = { selector: tag, ...isLinkSelector(tag), pairedBg: (bg && parseColor(bg)) || undefined, vars };
     const updates: Array<[string, string, Decl]> = [];
+    const seen = new Set<string>();
     const consider = (prop: string): void => {
       if (seen.has(prop) || touch?.props.has(prop)) return;
       seen.add(prop);
@@ -58,7 +61,6 @@ export class InlineStyler {
       } else mapped = mapDeclarationValue(prop, orig.value, fn, ctx);
       if (mapped !== null) updates.push([prop, mapped, orig]);
     };
-    const seen = new Set<string>();
     for (let i = 0; i < st.length; i++) {
       const prop = st.item(i);
       if (prop in PROPERTY_ROLES || prop.startsWith('--')) consider(prop);
@@ -75,10 +77,11 @@ export class InlineStyler {
       this.touches.set(el, touch);
     }
     this.restored.delete(el);
-    for (const [prop, value, orig] of updates) {
-      st.setProperty(prop, value, orig.priority);
-      touch.props.set(prop, { orig, ours: declOf(st, prop) });
-    }
+    // Shorthands first: they reset their longhands, which must stay as the later (overriding) declarations.
+    updates.sort((a, b) => shorthandRank(a[0]) - shorthandRank(b[0]));
+    for (const [prop, value, orig] of updates) st.setProperty(prop, value, orig.priority);
+    // Read back only after all writes: a later longhand can change how an earlier shorthand reads.
+    for (const [prop, , orig] of updates) touch.props.set(prop, { orig, ours: declOf(st, prop) });
     this.written.set(el, el.getAttribute('style') ?? '');
   }
 
@@ -96,8 +99,10 @@ export class InlineStyler {
       }
       // The page edited the element: keep its current declarations, put back only our colours.
       const st = (el as HTMLElement).style;
-      for (const [prop, d] of t.props) {
-        if (!sameDecl(st, prop, d.ours)) continue; // the page set this colour itself
+      const entries = [...t.props].sort((a, b) => shorthandRank(a[0]) - shorthandRank(b[0]));
+      // Decide what is still ours before writing: restoring a shorthand resets its longhands.
+      const mine = entries.filter(([prop, d]) => sameDecl(st, prop, d.ours)); // else the page set it itself
+      for (const [prop, d] of mine) {
         if (d.orig.value === '') st.removeProperty(prop);
         else st.setProperty(prop, d.orig.value, d.orig.priority);
       }
