@@ -178,3 +178,17 @@ test('a constructed sheet shared by two shadow roots is mirrored into both; turn
   const counts = await page.evaluate(() => ['x-a', 'x-b'].map((t) => document.querySelector(t)!.shadowRoot!.adoptedStyleSheets.length));
   expect(counts).toEqual([1, 1]);
 });
+
+test('repeated settings changes do not make a later stylesheet "heavy"', async ({ context, sw, setSettings, bodyBg }) => {
+  const page = await open(context, 'light.html');
+  await expect.poll(() => bodyBg(page)).toBeLessThan(DARK);
+  for (const br of [90, 110, 95, 105, 100]) await setSettings({ g: { ...DEFAULT_GLOBAL, adj: { ...DEFAULT_GLOBAL.adj, br } } });
+  await page.evaluate(() => {
+    const style = document.createElement('style');
+    style.textContent = '.later{background-color:#fff}';
+    document.head.append(style);
+    document.body.insertAdjacentHTML('beforeend', '<div class="later" id="later">Added after the settings changes.</div>');
+  });
+  await expect.poll(() => bgL(page.locator('#later'))).toBeLessThan(DARK);
+  expect(await tabStatus(sw, page)).not.toBe('heavy');
+});
