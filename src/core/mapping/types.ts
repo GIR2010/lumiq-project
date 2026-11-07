@@ -1,4 +1,5 @@
 import type { Oklch } from '../color';
+import type { VarRoles } from '../css/vars';
 
 export type Role = 'bg' | 'text' | 'border' | 'shadow';
 
@@ -7,6 +8,7 @@ export interface RuleContext {
   isLink: boolean;
   isVisited: boolean;
   pairedBg?: Oklch;
+  vars?: Pick<VarRoles, 'roleOf' | 'isMixed'>;
 }
 
 export interface PageColorStats {

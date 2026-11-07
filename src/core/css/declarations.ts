@@ -184,10 +184,105 @@ export function mapValueWithRole(value: string, role: Role, fn: ColorFn, ctx: Ru
   return r.changed ? r.text : null;
 }
 
+export const TWIN_SEPARATOR = '__dx-';
+const MAX_VAR_REWRITES = 50;
+
+export function twinName(name: string, role: Role): string {
+  return `${name}${TWIN_SEPARATOR}${role}`;
+}
+
+const OPAQUE_START = /(?<![\w-])url\(|["']/iy;
+const VAR_START = /(?<![\w-])var\(/iy;
+
+function opaqueAt(value: string, i: number): boolean {
+  OPAQUE_START.lastIndex = i;
+  return OPAQUE_START.test(value);
+}
+
+function varAt(value: string, i: number): boolean {
+  VAR_START.lastIndex = i;
+  return VAR_START.test(value);
+}
+
+/** Index of the paren closing the one at `open` (strings and url() skipped), or -1. */
+function balancedClose(value: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < value.length; i++) {
+    if (opaqueAt(value, i)) {
+      const end = opaqueEnd(value, i);
+      if (end >= value.length && value[end - 1] !== ')' && value[end - 1] !== value[i]) return -1;
+      i = end - 1;
+    } else if (value[i] === '(') depth++;
+    else if (value[i] === ')' && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/** Index of the first top-level comma in `s`, or -1. */
+function topComma(s: string): number {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (opaqueAt(s, i)) i = opaqueEnd(s, i) - 1;
+    else if (s[i] === '(') depth++;
+    else if (s[i] === ')') depth--;
+    else if (s[i] === ',' && depth === 0) return i;
+  }
+  return -1;
+}
+
+interface RewriteState { left: number; changed: boolean }
+
+/** Left-to-right in document order; the first MAX_VAR_REWRITES mixed uses are wrapped, the rest stay. */
+function rewriteScan(value: string, role: Role, isMixed: (name: string) => boolean, st: RewriteState): string {
+  let out = '';
+  for (let i = 0; i < value.length; i++) {
+    if (opaqueAt(value, i)) {
+      const end = opaqueEnd(value, i);
+      out += value.slice(i, end);
+      i = end - 1;
+    } else if (varAt(value, i)) {
+      const close = balancedClose(value, i + 3);
+      const inner = value.slice(i + 4, close);
+      const comma = topComma(inner);
+      const name = (comma < 0 ? inner : inner.slice(0, comma)).trim();
+      const wrap = name.startsWith('--') && st.left > 0 && isMixed(name);
+      if (wrap) { st.left--; st.changed = true; }
+      const text = 'var(' + (comma < 0 ? inner
+        : inner.slice(0, comma + 1) + rewriteScan(inner.slice(comma + 1), role, isMixed, st)) + ')';
+      out += wrap ? `var(${twinName(name, role)}, ${text})` : text;
+      i = close;
+    } else out += value[i];
+  }
+  return out;
+}
+
+/**
+ * Rewrites each var(--x[, fb]) of a mixed-role variable to var(--x__dx-R, var(--x[, fb])), at any depth.
+ * Null when nothing changed or the parens are unbalanced.
+ */
+export function rewriteVarUses(value: string, role: Role, isMixed: (name: string) => boolean): string | null {
+  if (!/var\(/i.test(value)) return null;
+  // Balance check first so the scan below can rely on every var( having a closing paren.
+  for (let i = 0, depth = 0; i < value.length; i++) {
+    if (opaqueAt(value, i)) {
+      const end = opaqueEnd(value, i);
+      i = end - 1;
+    } else if (value[i] === '(') depth++;
+    else if (value[i] === ')' && --depth < 0) return null;
+    if (i === value.length - 1 && depth !== 0) return null;
+  }
+  const st: RewriteState = { left: MAX_VAR_REWRITES, changed: false };
+  const out = rewriteScan(value, role, isMixed, st);
+  return st.changed ? out : null;
+}
+
 export function mapDeclarationValue(prop: string, value: string, fn: ColorFn, ctx: RuleContext): string | null {
   const role = roleOf(prop);
   if (!role) return null;
-  return mapValueWithRole(value, role, fn, ctx, prop);
+  const mapped = mapValueWithRole(value, role, fn, ctx, prop);
+  if (!ctx.vars) return mapped;
+  const rewritten = rewriteVarUses(mapped ?? value, role, ctx.vars.isMixed);
+  return rewritten ?? mapped;
 }
 
 export function isLinkSelector(selector: string): { isLink: boolean; isVisited: boolean } {

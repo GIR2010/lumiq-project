@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
-import type { ColorFn } from '../mapping/types';
-import { isLinkSelector, mapDeclarationValue } from './declarations';
+import type { ColorFn, Role } from '../mapping/types';
+import { isLinkSelector, mapDeclarationValue, rewriteVarUses } from './declarations';
 
 // Shadow colors are dark surfaces, so the stub treats the 'shadow' role like 'bg'.
 const fn: ColorFn = (_c, role) => (role === 'bg' || role === 'shadow' ? '#111111' : '#eeeeee');
@@ -58,3 +58,33 @@ test.each([
   ['color', 'rgb( 1 2 3 / var(--a) )', 'rgb(238 238 238 / var(--a))'],
   ['color', 'rgb(1 2 3 / var(--a, .5))', 'rgb(238 238 238 / var(--a, .5))'],
 ])('%s: %s → %s', (p, v, out) => expect(mapDeclarationValue(p, v, fn, ctx)).toBe(out));
+
+const mixed = (n: string) => n === '--white' || n === '--c';
+test.each([
+  ['color', 'var(--white)', 'text', 'var(--white__dx-text, var(--white))'],
+  ['background-color', 'var(--white, #fff)', 'bg', 'var(--white__dx-bg, var(--white, #fff))'],
+  ['color', 'var(--a, var(--white))', 'text', 'var(--a, var(--white__dx-text, var(--white)))'],
+])('rewriteVarUses %s', (_p, v, role, out) => expect(rewriteVarUses(v, role as Role, mixed)).toBe(out));
+test('не смешанные и числа не трогаются', () => {
+  expect(rewriteVarUses('var(--su1)', 'text', mixed)).toBeNull();
+  expect(rewriteVarUses('10px', 'text', mixed)).toBeNull();
+});
+test('ограничение 50 замен и валидный результат', () => {
+  const v = Array(60).fill('var(--c)').join(' ');
+  const out = rewriteVarUses(v, 'bg', mixed)!;
+  expect((out.match(/__dx-bg/g) ?? []).length).toBe(50);
+  expect(out.endsWith(' var(--c) var(--c)')).toBe(true);
+});
+test('несбалансированные скобки → null', () => expect(rewriteVarUses('var(--c', 'bg', mixed)).toBeNull());
+test('url() и строки непрозрачны', () => {
+  expect(rewriteVarUses('url(var(--c))', 'bg', mixed)).toBeNull();
+  expect(rewriteVarUses('"var(--c)"', 'bg', mixed)).toBeNull();
+});
+test('mapDeclarationValue с ctx.vars: объявление без литеральных цветов тоже переписывается', () => {
+  const c = { ...ctx, vars: { roleOf: () => 'text' as const, isMixed: mixed } };
+  expect(mapDeclarationValue('color', 'var(--white)', fn, c)).toBe('var(--white__dx-text, var(--white))');
+});
+test('fallback с цветом и смешанная переменная: оба преобразования', () => {
+  const c = { ...ctx, vars: { roleOf: () => 'text' as const, isMixed: mixed } };
+  expect(mapDeclarationValue('color', 'var(--white, #000)', fn, c)).toBe('var(--white__dx-text, var(--white, #eeeeee))');
+});
