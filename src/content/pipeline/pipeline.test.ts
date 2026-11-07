@@ -801,3 +801,74 @@ test('1.5b: без images поведение прежнее (зеркала бе
   const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
   expect(s.nextElementSibling!.textContent).not.toContain('list-style-image');
 });
+
+// --- 1.5b: dark icon <img> ---
+
+/** jsdom has no layout: a rendered, loaded 24×24 <img>. */
+function iconImg(src: string, parent: ParentNode = document.body): HTMLImageElement {
+  const img = document.createElement('img');
+  img.setAttribute('src', src);
+  Object.defineProperty(img, 'complete', { configurable: true, get: () => true });
+  img.getBoundingClientRect = () => ({ width: 24, height: 24 }) as DOMRect;
+  parent.append(img);
+  return img;
+}
+/** Analyzer whose requests resolve with the verdict given per URL (default: never). */
+function verdicts(map: Record<string, Icon>) {
+  return fakeAnalyzer({ request: (url) => (map[url] ? Promise.resolve(map[url]) : new Promise<Icon>(() => {})) });
+}
+
+test('1.5b: <img> при старте и в теневом корне получает data-darkext-icon; detach снимает', async () => {
+  const img = iconImg('https://x.test/logo.png');
+  const host = document.createElement('div'); document.body.append(host);
+  const root = host.attachShadow({ mode: 'open' });
+  const inShadow = iconImg('https://x.test/s.png', root);
+  const a = verdicts({ 'https://x.test/logo.png': darkIcon, 'https://x.test/s.png': darkIcon });
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg()); p.addRoot(root);
+  await settle();
+  expect(img.getAttribute('data-darkext-icon')).toBe('1');
+  expect(inShadow.getAttribute('data-darkext-icon')).toBe('1');
+  p.detach();
+  expect(img.hasAttribute('data-darkext-icon')).toBe(false);
+  expect(inShadow.hasAttribute('data-darkext-icon')).toBe(false);
+});
+
+test('1.5b: добавленный <img> (и вложенный) анализируется; смена src снимает атрибут и анализирует заново', async () => {
+  const a = verdicts({ 'https://x.test/a.png': darkIcon });
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
+  const wrap = document.createElement('div');
+  const nested = iconImg('https://x.test/a.png', wrap);
+  document.body.append(wrap);
+  const img = iconImg('https://x.test/a.png');
+  await frame(); await settle();
+  expect(nested.getAttribute('data-darkext-icon')).toBe('1');
+  expect(img.getAttribute('data-darkext-icon')).toBe('1');
+  const before = a.request.mock.calls.length;
+  img.setAttribute('src', 'https://x.test/b.png');
+  await frame();
+  expect(img.hasAttribute('data-darkext-icon')).toBe(false);
+  expect(a.request).toHaveBeenLastCalledWith('https://x.test/b.png');
+  expect(a.request.mock.calls.length).toBe(before + 1); // our own attribute is not fed back
+});
+
+test('1.5b: freeze оставляет атрибуты; без images <img> не трогаются', async () => {
+  const img = iconImg('https://x.test/logo.png');
+  const a = verdicts({ 'https://x.test/logo.png': darkIcon });
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
+  await settle();
+  p.freeze();
+  expect(img.getAttribute('data-darkext-icon')).toBe('1');
+  img.removeAttribute('data-darkext-icon');
+  const q = createPipeline(document, { fetchCss: vi.fn() }); q.start(cfg());
+  document.body.append(iconImg('https://x.test/other.png'));
+  await frame(); await settle();
+  expect(document.querySelectorAll('[data-darkext-icon]').length).toBe(0);
+});
+
+test('1.5b: setDisabled отключает базовый лист с фильтром значков', () => {
+  const p = createPipeline(document, imagesDeps(fakeAnalyzer())); p.start(cfg());
+  const base = document.querySelector('style[data-darkext=base]')!;
+  expect(base.textContent).toContain('img[data-darkext-icon]');
+  p.setDisabled(true);
+  expect(base.getAttribute('media')).toBe('not all');
+});

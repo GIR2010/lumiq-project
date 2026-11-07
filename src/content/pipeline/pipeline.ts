@@ -6,6 +6,7 @@ import { createColorFn } from '../../core/mapping/color-fn';
 import type { ColorFn, ColorMapper } from '../../core/mapping/types';
 import type { EffectiveConfig } from '../../core/settings/resolve';
 import type { ImageAnalyzer } from './images';
+import { ImgIcons } from './img-icons';
 import { InlineStyler } from './inline';
 import { MaskIndex } from './masks';
 import { buildMirrorCss, type IconLookup } from './mirror';
@@ -109,6 +110,8 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   let icons: Icons | null = null;
   const requested = new Set<string>();
   const imageUrls = new Map<Source, Set<string>>();
+  /** Dark icon <img> marks; shares the session's analyzer. */
+  let imgIcons: ImgIcons | null = null;
   const iconLookup: IconLookup = (url) => icons?.get(url)?.inverted;
   const now = deps.now ?? (() => performance.now());
 
@@ -703,6 +706,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       onStyleAttr: (el) => guard(() => { if (running) applyInline([el]); }),
       onHeadChange: () => guard(() => { if (running) writer.ensureBaseFirst(); }),
       onNodesAdded: (els) => { if (running) noteAdded(els); },
+      onImage: (img) => guard(() => { if (running) imgIcons?.consider(img); }),
       onFlushed: () => guard(() => { if (running) frameWork(); }),
       isOwn: (r) => inline.isOwnMutation(r),
     };
@@ -721,6 +725,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     for (const item of items) charge(() => build(item));
     rebuildDefiners(changed, new Set(items.map((i) => i.source)));
     applyInline(styledIn(root));
+    imgIcons?.scan(root);
     // Its content was never an added node: look it up for the mask selectors already known.
     const content = Array.from(root.children).filter((el) => !isOwnNode(el));
     if (content.length && !masks.full) {
@@ -768,6 +773,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
         for (const item of items) count(item, false);
       }, t0);
       schedule(items, styledIn(doc), t0);
+      imgIcons?.scan(doc);
       observe(doc);
       for (const r of [...roots]) {
         if (r.host.isConnected) attachRoot(r);
@@ -803,12 +809,17 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     if (!deps.images) return;
     const a = deps.images();
     icons = a;
+    imgIcons = new ImgIcons(a);
     a.onResult((url, r) => { if (icons === a) guard(() => onIcon(url, r)); });
   }
 
+  /** Stops icon work; the <img> marks stay (a frozen page keeps them, detach removes them). */
   function stopIcons(): void {
     const a = icons;
     icons = null;
+    const ii = imgIcons;
+    imgIcons = null;
+    if (ii) safe(() => ii.stop());
     requested.clear();
     imageUrls.clear();
     if (a) safe(() => a.dispose());
@@ -840,7 +851,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   }
 
   function detach(): void {
+    const ii = imgIcons;
     stopWork();
+    if (ii) safe(() => ii.clear());
     fn = null;
     safe(() => inline.restoreAll());
     safe(() => writer.clear());

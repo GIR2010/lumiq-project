@@ -7,12 +7,16 @@ export interface ObserverHandlers {
   onHeadChange?(): void;
   /** Elements (not ours, still connected) added since the last batch, subtree roots only; called before `onFlushed`. */
   onNodesAdded?(els: Element[]): void;
+  /** <img> elements (not ours, still connected) added (descendants included) or whose src/srcset changed. */
+  onImage?(img: HTMLImageElement): void;
   /** Called after each batch has been delivered. */
   onFlushed?(): void;
 }
 
 /** Attributes that change which sheet a <link>/<style> provides, or how it applies. */
 const SHEET_ATTRS = ['href', 'media', 'rel', 'disabled', 'type'];
+/** Attributes that change which image an <img> shows. */
+const IMG_ATTRS = ['src', 'srcset'];
 
 export function isOwnNode(n: Node | null | undefined): boolean {
   return !!n && n.nodeType === Node.ELEMENT_NODE && (n as Element).hasAttribute('data-darkext');
@@ -44,6 +48,7 @@ export function observeRoot(root: Document | ShadowRoot, h: ObserverHandlers): (
   const sheets = new Set<HTMLStyleElement | HTMLLinkElement>();
   const removed = new Set<Element>();
   const styled = new Set<Element>();
+  const images = new Set<HTMLImageElement>();
   let headChanged = false;
   /** Elements were added / removed: the batch is delivered even without sheet or style changes. */
   const addedEls = new Set<Element>();
@@ -55,11 +60,13 @@ export function observeRoot(root: Document | ShadowRoot, h: ObserverHandlers): (
     addedEls.add(el);
     if (isSheetNode(el)) sheets.add(el);
     if (el.hasAttribute('style')) styled.add(el);
+    if (el.localName === 'img') images.add(el as HTMLImageElement);
     if (!el.firstElementChild) return;
-    for (const d of Array.from(el.querySelectorAll('style, link, [style]'))) {
+    for (const d of Array.from(el.querySelectorAll('style, link, [style], img'))) {
       if (isOwnNode(d)) continue;
       if (isSheetNode(d)) sheets.add(d);
       if (d.hasAttribute('style')) styled.add(d);
+      if (d.localName === 'img') images.add(d as HTMLImageElement);
     }
   };
 
@@ -72,14 +79,15 @@ export function observeRoot(root: Document | ShadowRoot, h: ObserverHandlers): (
 
   const flush = () => {
     cancel = null;
-    const rem = [...removed], sh = [...sheets], st = [...styled], head = headChanged, add = [...addedEls];
-    removed.clear(); sheets.clear(); styled.clear(); addedEls.clear(); headChanged = nodesRemoved = false;
+    const rem = [...removed], sh = [...sheets], st = [...styled], head = headChanged, add = [...addedEls], img = [...images];
+    removed.clear(); sheets.clear(); styled.clear(); addedEls.clear(); images.clear(); headChanged = nodesRemoved = false;
     for (const el of rem) if (!el.isConnected) h.onSheetNodeRemoved(el);
     for (const el of sh) if (el.isConnected) h.onSheetNode(el);
     for (const el of st) if (el.isConnected) h.onStyleAttr(el);
     if (head) h.onHeadChange?.();
     const connected = add.filter((el) => el.isConnected);
     if (connected.length) h.onNodesAdded?.(connected);
+    if (h.onImage) for (const el of img) if (el.isConnected) h.onImage(el);
     h.onFlushed?.();
   };
 
@@ -91,6 +99,7 @@ export function observeRoot(root: Document | ShadowRoot, h: ObserverHandlers): (
         const el = t as Element;
         if (isOwnNode(el)) continue;
         if (r.attributeName === 'style') styled.add(el);
+        else if (IMG_ATTRS.includes(r.attributeName!)) { if (el.localName === 'img') images.add(el as HTMLImageElement); }
         else if (el.localName === 'style' || el.localName === 'link') sheets.add(el as HTMLStyleElement | HTMLLinkElement);
       } else if (r.type === 'characterData') {
         const p = t.parentElement;
@@ -105,13 +114,13 @@ export function observeRoot(root: Document | ShadowRoot, h: ObserverHandlers): (
         for (const n of Array.from(r.removedNodes)) if (n.nodeType === Node.ELEMENT_NODE) gone(n as Element);
       }
     }
-    if (!cancel && (sheets.size || removed.size || styled.size || headChanged || addedEls.size || nodesRemoved)) cancel = scheduleFrame(flush);
+    if (!cancel && (sheets.size || removed.size || styled.size || images.size || headChanged || addedEls.size || nodesRemoved)) cancel = scheduleFrame(flush);
   };
 
   const mo = new MutationObserver(collect);
   mo.observe(root, {
     subtree: true, childList: true, characterData: true,
-    attributes: true, attributeFilter: ['style', ...SHEET_ATTRS],
+    attributes: true, attributeFilter: ['style', ...SHEET_ATTRS, ...IMG_ATTRS],
   });
 
   return () => {
@@ -119,6 +128,6 @@ export function observeRoot(root: Document | ShadowRoot, h: ObserverHandlers): (
     mo.disconnect();
     cancel?.();
     cancel = null;
-    sheets.clear(); removed.clear(); styled.clear(); addedEls.clear(); headChanged = nodesRemoved = false;
+    sheets.clear(); removed.clear(); styled.clear(); addedEls.clear(); images.clear(); headChanged = nodesRemoved = false;
   };
 }

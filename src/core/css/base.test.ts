@@ -31,3 +31,8 @@ test('базовые правила не задают scrollbar-color/scrollbar-
   expect(css).not.toMatch(/scrollbar-(color|width)/);
   expect(css).toContain('color-scheme: dark');
 });
+
+test('1.5b: базовые правила инвертируют значки-<img> с data-darkext-icon', () => {
+  const css = buildBaseCss(PRESETS[0].colors, fn, DEFAULT_ADJUSTMENTS);
+  expect(css).toMatch(/img\[data-darkext-icon\]\s*\{\s*filter:\s*invert\(1\) hue-rotate\(180deg\) !important;?\s*\}/);
+});
