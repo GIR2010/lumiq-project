@@ -2,10 +2,13 @@ import { parseColor } from '../../core/color';
 import { isLinkSelector, mapDeclarationValue, mapValueWithRole, rewriteVarUses, twinName } from '../../core/css/declarations';
 import type { VarRoles } from '../../core/css/vars';
 import type { ColorFn, Role, RuleContext } from '../../core/mapping/types';
-import { replaceImageUrl } from '../../core/css/image-urls';
+import { replaceImageUrlWith } from '../../core/css/image-urls';
 import { declaresBackground, imageDecls, isGroupingRule, isStyleRule, ruleBase, ruleHeader, varShorthands } from './sheets';
 
-/** URL → inverted data: copy, when the image is a dark icon. */
+/**
+ * URL → the CSS standing for its inverted copy (a `var()` naming a custom property defined once per
+ * document) when the image is a dark icon; the copy itself is never repeated in mirror rules.
+ */
 export type IconLookup = (url: string) => string | undefined;
 
 const MASK_TEXT_PROPS = new Set(['background-color', 'background']);
@@ -71,7 +74,7 @@ function styleRuleCss(rule: CSSStyleRule, fn: ColorFn, vars: VarRoles, isMask?: 
       const copy = icons(d.abs);
       if (!copy) continue;
       // A shorthand is never re-emitted (it would reset colours the mirror sets): only its image longhand.
-      const value = replaceImageUrl(d.shorthand ? `url("${d.raw.replace(/[\\"]/g, '\\$&')}")` : d.value, d.raw, copy);
+      const value = d.shorthand ? copy : replaceImageUrlWith(d.value, d.raw, copy);
       body += `${d.outProp}:${value}${d.important ? ' !important' : ''};`;
     }
   }

@@ -108,3 +108,21 @@ test('1.5b: правило значков в теневом корне — пе�
   w.clear(); expect(root.querySelector('[data-darkext]')).toBeNull();
   w.setRootCss(root, 'x{}'); w.removeRootCss(root); expect(root.querySelector('[data-darkext]')).toBeNull();
 });
+
+test('C1: стиль переменных значков — один элемент, следует setDisabled, переустанавливается, снимается clear', () => {
+  document.head.innerHTML = '';
+  const w = new StyleWriter(document);
+  w.setIconVars(':root{--darkext-icon-0:url("data:x")}');
+  w.setIconVars(':root{--darkext-icon-0:url("data:x");--darkext-icon-1:url("data:y")}');
+  const els = document.querySelectorAll('style[data-darkext=icon-vars]');
+  expect(els.length).toBe(1);
+  expect(els[0].textContent).toContain('--darkext-icon-1');
+  w.setDisabled(true); expect(els[0].getAttribute('media')).toBe('not all');
+  w.setDisabled(false); expect(els[0].hasAttribute('media')).toBe(false);
+  els[0].remove();
+  w.setIconVars(':root{}');
+  expect(document.querySelectorAll('style[data-darkext=icon-vars]').length).toBe(1);
+  w.removeIconVars(); expect(document.querySelector('[data-darkext=icon-vars]')).toBeNull();
+  w.setIconVars(':root{}'); w.clear();
+  expect(document.querySelector('[data-darkext]')).toBeNull();
+});

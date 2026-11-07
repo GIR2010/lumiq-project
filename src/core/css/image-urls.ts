@@ -150,8 +150,13 @@ export function singleImageUrl(prop: string, value: string): string | null {
 
 /** Replaces every top-level url() whose decoded argument equals `from` with url("to"). */
 export function replaceImageUrl(value: string, from: string, to: string): string {
+  return replaceImageUrlWith(value, from, `url("${to.replace(/[\\"]/g, '\\$&')}")`);
+}
+
+/** Replaces every top-level url() whose decoded argument equals `from` with the CSS text `css` (e.g. a var()). */
+export function replaceImageUrlWith(value: string, from: string, css: string): string {
   const r = scan(value);
-  const quoted = `url("${to.replace(/[\\"]/g, '\\$&')}")`;
+  const quoted = css;
   let out = '';
   let last = 0;
   for (const u of r.urls) {

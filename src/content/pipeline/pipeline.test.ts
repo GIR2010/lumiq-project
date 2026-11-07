@@ -9,7 +9,12 @@ import { MaskIndex } from './masks';
 import { parseCssText } from './sheets';
 
 // Pass-through wrapper: counts how often the pipeline (re)counts variable usage of sheets.
-const calls = vi.hoisted(() => ({ countVarUsage: 0 }));
+const calls = vi.hoisted(() => ({ countVarUsage: 0, buildMirrorCss: 0 }));
+// Pass-through wrapper: counts mirror builds (one per source build; recursion inside the module is not counted).
+vi.mock('./mirror', async (importOriginal) => {
+  const m = await importOriginal<typeof import('./mirror')>();
+  return { ...m, buildMirrorCss: (...a: Parameters<typeof m.buildMirrorCss>) => { calls.buildMirrorCss++; return m.buildMirrorCss(...a); } };
+});
 vi.mock('./sheets', async (importOriginal) => {
   const m = await importOriginal<typeof import('./sheets')>();
   return {
@@ -667,20 +672,25 @@ const darkIcon: Icon = { verdict: 'dark-icon', animated: false, inverted: DATA }
 const abs = (u: string) => new URL(u, document.baseURI).href;
 const imagesDeps = (...fakes: ReturnType<typeof fakeAnalyzer>[]) => {
   let i = 0;
-  return { fetchCss: vi.fn(), images: () => fakes[Math.min(i++, fakes.length - 1)] as never };
+  return { fetchCss: vi.fn(), iconDelayMs: 1, images: () => fakes[Math.min(i++, fakes.length - 1)] as never };
 };
+/** Past the (shortened) icon debounce: the batch is published. */
+const iconFlush = () => new Promise(r => setTimeout(r, 10));
+const VAR0 = 'var(--darkext-icon-0)';
+const iconVars = () => document.querySelector('style[data-darkext=icon-vars]')?.textContent ?? '';
 
-test('1.5b: list-style-image → request; зеркало только после dark-icon и одного кадра', async () => {
+test('1.5b: list-style-image → request; зеркало только после dark-icon и пакетной публикации', async () => {
   const a = fakeAnalyzer();
   const s = style('li{list-style-image:url(a.gif)}');
   const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
   expect(a.request).toHaveBeenCalledWith(abs('a.gif'));
   expect(s.nextElementSibling?.getAttribute('data-darkext')).not.toBe('mirror');
   a.finish(abs('a.gif'), darkIcon);
-  expect(s.nextElementSibling?.getAttribute('data-darkext')).not.toBe('mirror'); // coalesced into the frame
-  await frame();
+  expect(s.nextElementSibling?.getAttribute('data-darkext')).not.toBe('mirror'); // coalesced into the batch
+  await iconFlush();
   expect(s.nextElementSibling?.getAttribute('data-darkext')).toBe('mirror');
-  expect(s.nextElementSibling!.textContent).toContain(`list-style-image:url("${DATA}")`);
+  expect(s.nextElementSibling!.textContent).toContain(`list-style-image:${VAR0}`);
+  expect(iconVars()).toBe(`:root{--darkext-icon-0:url("${DATA}");}`);
 });
 
 test('1.5b: вердикт other → зеркала нет, перестройки нет', async () => {
@@ -689,7 +699,7 @@ test('1.5b: вердикт other → зеркала нет, перестройк
   const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
   const before = calls.countVarUsage;
   a.finish(abs('a.gif'), { verdict: 'other', animated: false });
-  await frame();
+  await iconFlush();
   expect(s.nextElementSibling?.getAttribute('data-darkext')).not.toBe('mirror');
   expect(calls.countVarUsage).toBe(before);
 });
@@ -701,8 +711,8 @@ test('1.5b: перестройка по результату не пересчи
   expect(s.nextElementSibling!.textContent).not.toContain('data:');
   const before = calls.countVarUsage;
   a.finish(abs('a.gif'), darkIcon);
-  await frame();
-  expect(s.nextElementSibling!.textContent).toContain(`list-style-image:url("${DATA}")`);
+  await iconFlush();
+  expect(s.nextElementSibling!.textContent).toContain(`list-style-image:${VAR0}`);
   expect(calls.countVarUsage).toBe(before);
 });
 
@@ -713,7 +723,7 @@ test('1.5b: результат после detach() ничего не пишет;
   p.detach();
   expect(a.dispose).toHaveBeenCalledTimes(1);
   a.finish(abs('a.gif'), darkIcon);
-  await frame();
+  await iconFlush();
   expect(document.querySelectorAll('[data-darkext]').length).toBe(0);
 });
 
@@ -724,8 +734,8 @@ test('1.5b: start() после detach() создаёт новый анализа
   p.detach(); p.start(cfg());
   expect(b.request).toHaveBeenCalledWith(abs('a.gif'));
   b.finish(abs('a.gif'), darkIcon);
-  await frame();
-  expect(s.nextElementSibling!.textContent).toContain(`list-style-image:url("${DATA}")`);
+  await iconFlush();
+  expect(s.nextElementSibling!.textContent).toContain(`list-style-image:${VAR0}`);
 });
 
 test('1.5b: 20 одинаковых URL в разных листах → один request', () => {
@@ -740,10 +750,11 @@ test('1.5b: update перестраивает с известными верди
   const s = style('li{list-style-image:url(a.gif)}');
   const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
   a.finish(abs('a.gif'), darkIcon);
-  await frame();
+  await iconFlush();
   p.update({ ...cfg(), colors: PRESETS.find(x => x.id === 'oled')!.colors });
   await settle();
-  expect(s.nextElementSibling!.textContent).toContain(`list-style-image:url("${DATA}")`);
+  expect(s.nextElementSibling!.textContent).toContain(`list-style-image:${VAR0}`);
+  expect(document.querySelectorAll('style[data-darkext=icon-vars]').length).toBe(1);
   expect(a.request).toHaveBeenCalledTimes(1);
 });
 
@@ -754,8 +765,8 @@ test('1.5b: новый лист после старта — его URL запр�
   await frame();
   expect(a.request).toHaveBeenCalledWith(abs('b.png'));
   a.finish(abs('b.png'), darkIcon);
-  await frame();
-  expect(s.nextElementSibling!.textContent).toContain(`background-image:url("${DATA}")`);
+  await iconFlush();
+  expect(s.nextElementSibling!.textContent).toContain(`background-image:${VAR0}`);
 });
 
 test('1.5b: ошибка анализатора не меняет статус конвейера', async () => {
@@ -782,7 +793,7 @@ test('1.5b: кросс-доменный лист — относительные 
   };
   const a = fakeAnalyzer();
   const link = crossOriginLink('https://cdn.example/css/main.css');
-  const p = createPipeline(document, { fetchCss: vi.fn(async (u: string) => files[u]), images: () => a as never });
+  const p = createPipeline(document, { fetchCss: vi.fn(async (u: string) => files[u]), iconDelayMs: 1, images: () => a as never });
   p.start(cfg());
   await settle();
   const urls = a.request.mock.calls.map(c => c[0]);
@@ -790,10 +801,10 @@ test('1.5b: кросс-доменный лист — относительные 
   expect(urls).toContain('https://cdn.example/lib/img/i.gif');
   a.finish('https://cdn.example/css/s.png', darkIcon);
   a.finish('https://cdn.example/lib/img/i.gif', darkIcon);
-  await frame();
+  await iconFlush();
   const css = link.nextElementSibling!.textContent!;
-  expect(css).toContain(`background-image:url("${DATA}")`);
-  expect(css).toContain(`list-style-image:url("${DATA}")`);
+  expect(css).toMatch(/background-image:var\(--darkext-icon-[01]\)/);
+  expect(css).toMatch(/list-style-image:var\(--darkext-icon-[01]\)/);
 });
 
 test('1.5b: без images поведение прежнее (зеркала без подмены)', () => {
@@ -900,4 +911,115 @@ test('I3: <img>, удалённая до load, забывается после �
   complete = true;
   img.dispatchEvent(new Event('load'));
   expect(a.request).not.toHaveBeenCalled();
+});
+
+// --- C1 / I1 / I4: icon variables, batched publishing, CSP ---
+
+test('C1: спрайт в 50 правилах → в зеркалах нет data:, 50 ссылок var(); data: URL один раз в стиле переменных', async () => {
+  const a = fakeAnalyzer();
+  const s = style(Array.from({ length: 50 }, (_, i) => `.s${i}{background:url(sprite.png) -${i * 16}px 0 no-repeat}`).join(''));
+  const host = document.createElement('div'); document.body.append(host);
+  const root = host.attachShadow({ mode: 'open' });
+  const inner = style('.t{background-image:url(sprite.png)}', root);
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg()); p.addRoot(root);
+  const before = calls.countVarUsage;
+  a.finish(abs('sprite.png'), darkIcon);
+  await iconFlush(); await frame();
+  const mirror = s.nextElementSibling!.textContent!;
+  expect(mirror).not.toContain('data:');
+  expect((mirror.match(/var\(--darkext-icon-0\)/g) ?? []).length).toBe(50);
+  expect(inner.nextElementSibling!.textContent).toBe(`.t{background-image:${VAR0};}`); // inherited from the document root
+  const vars = iconVars();
+  expect(vars.split(DATA).length - 1).toBe(1);
+  // Ours: not mirrored, not counted
+  expect(document.querySelector('style[data-darkext=icon-vars] + style[data-darkext=mirror]')).toBeNull();
+  expect(calls.countVarUsage).toBe(before);
+  const el = document.querySelector('style[data-darkext=icon-vars]')!;
+  p.setDisabled(true); expect(el.getAttribute('media')).toBe('not all');
+  p.setDisabled(false);
+  p.detach();
+  expect(document.querySelector('style[data-darkext=icon-vars]')).toBeNull();
+});
+
+test('C1: freeze оставляет стиль переменных (зеркала продолжают на него ссылаться)', async () => {
+  const a = fakeAnalyzer();
+  style('li{list-style-image:url(a.gif)}');
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
+  a.finish(abs('a.gif'), darkIcon);
+  await iconFlush();
+  p.freeze();
+  expect(iconVars()).toContain(DATA);
+  p.detach();
+});
+
+test('I1: 10 результатов в окне debounce → одна перестройка на затронутый источник', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    const a = fakeAnalyzer();
+    const urls = Array.from({ length: 10 }, (_, i) => `i${i}.png`);
+    style(urls.map((u, i) => `.a${i}{background-image:url(${u})}`).join(''));
+    style(urls.map((u, i) => `.b${i}{list-style-image:url(${u})}`).join(''));
+    style('.c{background-image:url(other.png)}'); // not affected
+    const p = createPipeline(document, { fetchCss: vi.fn(), images: () => a as never }); p.start(cfg());
+    const base = calls.buildMirrorCss;
+    for (const u of urls) { a.finish(abs(u), darkIcon); vi.advanceTimersByTime(20); }
+    vi.advanceTimersByTime(249 - 20);
+    expect(calls.buildMirrorCss).toBe(base);
+    vi.advanceTimersByTime(1);
+    expect(calls.buildMirrorCss).toBe(base + 2);
+    expect((iconVars().match(/--darkext-icon-\d+:/g) ?? []).length).toBe(10);
+    // a later result rebuilds only the sources using it
+    a.finish(abs('other.png'), darkIcon);
+    vi.advanceTimersByTime(250);
+    expect(calls.buildMirrorCss).toBe(base + 3);
+    // a repeated result for a published URL changes nothing
+    a.finish(abs('i0.png'), darkIcon);
+    vi.advanceTimersByTime(2000);
+    expect(calls.buildMirrorCss).toBe(base + 3);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('I1: непрерывный поток результатов публикуется не позже чем через 1 с после первого', () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    const a = fakeAnalyzer();
+    const urls = Array.from({ length: 8 }, (_, i) => `s${i}.png`);
+    const s = style(urls.map((u, i) => `.a${i}{background-image:url(${u})}`).join(''));
+    const p = createPipeline(document, { fetchCss: vi.fn(), images: () => a as never }); p.start(cfg());
+    for (const u of urls.slice(0, 5)) { a.finish(abs(u), darkIcon); vi.advanceTimersByTime(200); } // t = 1000
+    expect(s.nextElementSibling!.textContent).toContain('var(--darkext-icon-');
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+function cspViolation(blockedURI: string): Event {
+  const e = new Event('securitypolicyviolation', { bubbles: true, composed: true });
+  Object.defineProperty(e, 'blockedURI', { value: blockedURI });
+  return e;
+}
+
+test('I4: нарушение CSP для data: → подмены в CSS выключены, зеркала возвращают оригинал; <img> не затронуты', async () => {
+  const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  const img = iconImg('https://x.test/logo.png');
+  const a = verdicts({ 'https://x.test/logo.png': darkIcon });
+  const s = style('li{list-style-image:url(a.gif)}.x{background-image:url(b.png)}');
+  const p = createPipeline(document, imagesDeps(a)); p.start(cfg());
+  a.finish(abs('a.gif'), darkIcon);
+  await iconFlush();
+  expect(s.nextElementSibling!.textContent).toContain(VAR0);
+  document.dispatchEvent(cspViolation('https://x.test/blocked.png')); // not data: — ignored
+  expect(iconVars()).toContain(DATA);
+  document.dispatchEvent(cspViolation('data'));
+  expect(document.querySelector('style[data-darkext=icon-vars]')).toBeNull();
+  expect(s.nextElementSibling?.textContent ?? '').not.toContain('var(--darkext-icon-');
+  a.finish(abs('b.png'), darkIcon); // later results: no swap
+  await iconFlush();
+  expect(document.querySelector('style[data-darkext=icon-vars]')).toBeNull();
+  expect(s.nextElementSibling?.textContent ?? '').not.toContain('var(--darkext-icon-');
+  await settle();
+  expect(img.getAttribute('data-darkext-icon')).toBe('1');
+  expect(debug).toHaveBeenCalledWith('[DarkExt] data: images blocked by the page CSP: CSS icon swaps off');
 });

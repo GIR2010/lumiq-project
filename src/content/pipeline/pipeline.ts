@@ -21,6 +21,8 @@ export interface PipelineDeps {
   now?: () => number;
   /** Icon analyzer factory: one analyzer per session (created by start, disposed by detach/freeze). */
   images?: () => Icons;
+  /** Trailing debounce of icon-driven rebuilds (default `ICON_DEBOUNCE_MS`); injectable for tests. */
+  iconDelayMs?: number;
 }
 /** The part of `ImageAnalyzer` the pipeline uses. */
 export type Icons = Pick<ImageAnalyzer, 'get' | 'request' | 'onResult' | 'dispose'>;
@@ -52,6 +54,16 @@ const FALLBACK_MS = 2000;
 const IMPORT_STATEMENT = /@import[^;{}]*;/gi;
 /** More elements added within a frame than this: the mask lookup scans the whole document instead. */
 const MAX_ADDED_LOOKUP = 64;
+/**
+ * Icon results are published in batches: a trailing debounce (a quiet spell this long after the last
+ * result), but at most ICON_MAX_WAIT_MS after the first result of a batch, so a steady stream of
+ * results (up to 200 per page) still shows up. Each batch rewrites the variables style once and
+ * rebuilds each affected source once.
+ */
+const ICON_DEBOUNCE_MS = 250;
+const ICON_MAX_WAIT_MS = 1000;
+/** Prefix of the document-level custom properties holding the inverted copies (`--darkext-icon-N`). */
+const ICON_VAR = '--darkext-icon-';
 
 /** Plan 1: both engines go through the adaptive mapper. Plan 2 swaps in the style mapper here. */
 function createMapper(cfg: EffectiveConfig): ColorMapper {
@@ -112,9 +124,24 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   const imageUrls = new Map<Source, Set<string>>();
   /** Dark icon <img> marks; shares the session's analyzer. */
   let imgIcons: ImgIcons | null = null;
+  /**
+   * Inverted copies published in the variables style (URL → N of `--darkext-icon-N`). Mirrors refer to
+   * a copy only once it is published, so a var() never points at an undefined property.
+   */
+  const iconIndex = new Map<string, number>();
+  /** Results waiting for the debounced publish. */
+  const pendingIcons = new Set<string>();
+  let iconTimer: ReturnType<typeof setTimeout> | null = null;
+  let iconMaxTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The page's CSP blocks data: images: CSS swaps are off for the rest of the page's life (<img> filters stay). */
+  let cssIconsBlocked = false;
+  const iconDelay = deps.iconDelayMs ?? ICON_DEBOUNCE_MS;
   /** The icon <img> rule written into each shadow root (the base sheet reaches the document only). */
   let iconImgCss = '';
-  const iconLookup: IconLookup = (url) => icons?.get(url)?.inverted;
+  const iconLookup: IconLookup = (url) => {
+    const n = iconIndex.get(url);
+    return n === undefined ? undefined : `var(${ICON_VAR}${n})`;
+  };
   const now = deps.now ?? (() => performance.now());
 
   let running = false;
@@ -301,13 +328,72 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     }
   }
 
-  /** A dark icon got its inverted copy: every built source using it is rebuilt at the end of the frame (no recount). */
+  /** A dark icon got its inverted copy: it is published with the next batch (see ICON_DEBOUNCE_MS). */
   function onIcon(url: string, r: { inverted?: string }): void {
-    if (!running || !r.inverted) return;
-    for (const [source, urls] of imageUrls) {
-      if (urls.has(url) && built.has(source)) pendingRebuild.add(source);
+    if (!running || !r.inverted || cssIconsBlocked || iconIndex.has(url)) return;
+    pendingIcons.add(url);
+    if (iconTimer !== null) clearTimeout(iconTimer);
+    iconTimer = setTimeout(() => guard(flushIcons), iconDelay);
+    if (iconMaxTimer === null) iconMaxTimer = setTimeout(() => guard(flushIcons), Math.max(iconDelay, ICON_MAX_WAIT_MS));
+  }
+
+  function cancelIconTimers(): void {
+    if (iconTimer !== null) clearTimeout(iconTimer);
+    if (iconMaxTimer !== null) clearTimeout(iconMaxTimer);
+    iconTimer = iconMaxTimer = null;
+  }
+
+  /** Built sources using any of the URLs are rebuilt now (no recount). */
+  function rebuildUsers(urls: string[]): void {
+    if (!urls.length) return;
+    for (const [source, used] of imageUrls) {
+      if (built.has(source) && urls.some((u) => used.has(u))) pendingRebuild.add(source);
     }
-    if (pendingRebuild.size) requestFrame();
+    flushRebuilds();
+  }
+
+  /** Publishes the batch: one write of the variables style, then one rebuild per source using a new copy. */
+  function flushIcons(): void {
+    cancelIconTimers();
+    const batch = [...pendingIcons];
+    pendingIcons.clear();
+    const a = icons;
+    if (!running || cssIconsBlocked || !a) return;
+    const added = batch.filter((u) => !iconIndex.has(u) && a.get(u)?.inverted);
+    if (!added.length) return;
+    for (const u of added) iconIndex.set(u, iconIndex.size);
+    writeIconVars();
+    rebuildUsers(added);
+  }
+
+  /** Each copy once, as a custom property on the root; shadow trees inherit it. */
+  function writeIconVars(): void {
+    let css = '';
+    for (const [url, n] of iconIndex) {
+      const copy = icons?.get(url)?.inverted;
+      if (copy) css += `${ICON_VAR}${n}:url("${copy.replace(/[\\"]/g, '\\$&')}");`;
+    }
+    writer.setIconVars(`:root{${css}}`);
+  }
+
+  /**
+   * The page's CSP blocked a data: image (ours or its own): our copies cannot render either. CSS swaps
+   * stop and every mirror using one is rebuilt with the original image.
+   */
+  function onCspViolation(e: Event): void {
+    const uri = (e as SecurityPolicyViolationEvent).blockedURI ?? '';
+    if (!/^data\b/i.test(uri)) return;
+    guard(() => {
+      if (!running || cssIconsBlocked) return;
+      cssIconsBlocked = true;
+      console.debug('[DarkExt] data: images blocked by the page CSP: CSS icon swaps off');
+      cancelIconTimers();
+      pendingIcons.clear();
+      const swapped = [...iconIndex.keys()];
+      iconIndex.clear();
+      writer.removeIconVars();
+      rebuildUsers(swapped);
+    });
   }
 
   /**
@@ -828,6 +914,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     const a = deps.images();
     icons = a;
     imgIcons = new ImgIcons(a);
+    doc.addEventListener('securitypolicyviolation', onCspViolation, true);
     a.onResult((url, r) => { if (icons === a) guard(() => onIcon(url, r)); });
   }
 
@@ -840,6 +927,11 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     if (ii) safe(() => ii.stop());
     requested.clear();
     imageUrls.clear();
+    // The variables style stays until writer.clear (a frozen page keeps its mirrors and their copies).
+    cancelIconTimers();
+    pendingIcons.clear();
+    iconIndex.clear();
+    doc.removeEventListener('securitypolicyviolation', onCspViolation, true);
     if (a) safe(() => a.dispose());
   }
 

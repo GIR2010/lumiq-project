@@ -1,4 +1,4 @@
-type Kind = 'base' | 'mirror' | 'fallback' | 'icons';
+type Kind = 'base' | 'mirror' | 'fallback' | 'icons' | 'icon-vars';
 type Source = Element | CSSStyleSheet;
 type Root = Document | ShadowRoot;
 /** Mirror of an adopted (ownerless) sheet: one constructed sheet, adopted into every root holding the source. */
@@ -7,6 +7,8 @@ interface AdoptedMirror { sheet: CSSStyleSheet; roots: Set<Root> }
 export class StyleWriter {
   private base: HTMLStyleElement | null = null;
   private fallback: HTMLStyleElement | null = null;
+  /** Document-level custom properties holding the inverted icon copies (mirrors refer to them by var()). */
+  private iconVars: HTMLStyleElement | null = null;
   private mirrors = new Map<Element, HTMLStyleElement>();
   private adopted = new Map<CSSStyleSheet, AdoptedMirror>();
   /** Our own constructed sheets: never to be treated as page sheets. */
@@ -39,6 +41,8 @@ export class StyleWriter {
     const parent: Element | null = this.doc.head ?? this.doc.documentElement;
     if (!parent) return;
     if (el.parentNode !== parent || parent.firstElementChild !== el) parent.insertBefore(el, parent.firstChild);
+    // The page may have replaced <head> wholesale: the icon variables go back too.
+    if (this.iconVars && !this.iconVars.isConnected) parent.appendChild(this.iconVars);
   }
 
   setBase(css: string): void {
@@ -63,6 +67,19 @@ export class StyleWriter {
   removeFallback(): void {
     this.fallback?.remove();
     this.fallback = null;
+  }
+
+  /** Writes (or re-inserts, if the page removed it) the icon variables style; custom properties inherit into shadow trees. */
+  setIconVars(css: string): void {
+    if (!this.iconVars) this.iconVars = this.make('icon-vars', css);
+    else if (this.iconVars.textContent !== css) this.iconVars.textContent = css;
+    this.applyMedia(this.iconVars);
+    if (!this.iconVars.isConnected) (this.doc.head ?? this.doc.documentElement)?.appendChild(this.iconVars);
+  }
+
+  removeIconVars(): void {
+    this.iconVars?.remove();
+    this.iconVars = null;
   }
 
   owns(sheet: CSSStyleSheet): boolean {
@@ -145,7 +162,7 @@ export class StyleWriter {
 
   setDisabled(disabled: boolean): void {
     this.disabled = disabled;
-    for (const el of [this.base, this.fallback, ...this.mirrors.values(), ...this.rootCss.values()]) if (el) this.applyMedia(el);
+    for (const el of [this.base, this.fallback, this.iconVars, ...this.mirrors.values(), ...this.rootCss.values()]) if (el) this.applyMedia(el);
     for (const m of this.adopted.values()) m.sheet.disabled = disabled;
   }
 
@@ -153,6 +170,7 @@ export class StyleWriter {
     this.base?.remove();
     this.base = null;
     this.removeFallback();
+    this.removeIconVars();
     for (const root of [...this.rootCss.keys()]) this.removeRootCss(root);
     for (const source of [...this.mirrors.keys(), ...this.adopted.keys()]) this.removeMirror(source);
   }
