@@ -70,3 +70,24 @@ test('запасной стиль: помечен fallback, выключаетс
   w.removeFallback(); expect(fb.isConnected).toBe(false); expect(w.hasFallback()).toBe(false);
   w.setFallback('x{}'); w.clear(); expect(document.querySelectorAll('[data-darkext]').length).toBe(0);
 });
+
+test('adopted: одно зеркало общего листа в нескольких корнях; уход корня и clear убирают его отовсюду', () => {
+  const A = new CSSStyleSheet();
+  const hosts = [document.createElement('div'), document.createElement('div')];
+  const [r1, r2] = hosts.map((h) => { document.body.append(h); const r = h.attachShadow({ mode: 'open' }); r.adoptedStyleSheets = [A]; return r; });
+  const w = new StyleWriter(document);
+  w.setMirror(A, '.a{color:red}', [r1, r2]);
+  expect(r1.adoptedStyleSheets.length).toBe(2); expect(r2.adoptedStyleSheets.length).toBe(2);
+  const mirror = r1.adoptedStyleSheets[1];
+  expect(r2.adoptedStyleSheets[1]).toBe(mirror);
+  expect(w.owns(mirror)).toBe(true); expect(w.owns(A)).toBe(false);
+  w.setMirror(A, '.a{color:blue}', [r2]);
+  expect(r1.adoptedStyleSheets).toEqual([A]); expect(r2.adoptedStyleSheets).toEqual([A, mirror]);
+  w.setMirror(A, '.a{color:blue}', [r1, r2]);
+  w.dropRoot(A, r2);
+  expect(r2.adoptedStyleSheets).toEqual([A]); expect(r1.adoptedStyleSheets).toEqual([A, mirror]);
+  w.setMirror(A, '.a{color:blue}', [r1, r2]);
+  w.clear();
+  expect(r1.adoptedStyleSheets).toEqual([A]); expect(r2.adoptedStyleSheets).toEqual([A]);
+  hosts.forEach((h) => h.remove());
+});

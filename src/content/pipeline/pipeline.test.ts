@@ -434,3 +434,28 @@ test('I6: при загрузке документа ждём листы, изв
   document.dispatchEvent(new Event('readystatechange'));
   expect(fallback()).toBeNull(); // every sheet present at DOMContentLoaded is mirrored
 });
+
+test('I3: лист, общий для двух shadow root, зеркалируется в оба; обновляется и снимается в обоих', async () => {
+  const shared = new CSSStyleSheet(); shared.replaceSync('.inner{background-color:#fff}');
+  const mk = () => {
+    const h = document.createElement('div'); document.body.append(h);
+    const r = h.attachShadow({ mode: 'open' }); r.adoptedStyleSheets = [shared]; return r;
+  };
+  const [r1, r2, r3] = [mk(), mk(), mk()];
+  const p = createPipeline(document, { fetchCss: vi.fn() }); p.start(cfg());
+  [r1, r2, r3].forEach((r) => p.addRoot(r));
+  const text = (r: ShadowRoot) => Array.from(r.adoptedStyleSheets[1]?.cssRules ?? []).map(x => x.cssText).join('');
+  for (const r of [r1, r2, r3]) { expect(r.adoptedStyleSheets.length).toBe(2); expect(text(r)).toContain('.inner'); }
+  shared.replaceSync('.inner2{background-color:#fff}');
+  p.refreshSheet(shared); await frame();
+  for (const r of [r1, r2, r3]) expect(text(r)).toContain('.inner2');
+  r1.adoptedStyleSheets = []; // the page drops the sheet from one root
+  p.adoptedChanged(r1); await frame();
+  expect(r1.adoptedStyleSheets).toEqual([]);
+  expect(r2.adoptedStyleSheets.length).toBe(2);
+  r3.host.remove(); // a disconnected host is pruned during the next frame flush
+  p.refreshSheet(shared); await frame();
+  expect(r3.adoptedStyleSheets).toEqual([shared]);
+  p.detach();
+  expect(r2.adoptedStyleSheets).toEqual([shared]);
+});

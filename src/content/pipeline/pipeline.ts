@@ -20,6 +20,8 @@ export type PipelineStatus = 'ok' | 'heavy' | 'error';
 export interface Pipeline {
   start(cfg: EffectiveConfig): void; update(cfg: EffectiveConfig): void; detach(): void;
   setDisabled(disabled: boolean): void; addRoot(root: ShadowRoot): void; refreshSheet(sheet: CSSStyleSheet): void;
+  /** A root's adoptedStyleSheets were assigned or (no root: any) adopted sheet changed; re-checked once per frame. */
+  adoptedChanged(root?: Document | ShadowRoot): void;
   status(): PipelineStatus; onStatus(cb: (s: PipelineStatus) => void): void;
 }
 
@@ -60,9 +62,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   const writer = new StyleWriter(doc);
   const inline = new InlineStyler();
   const entries = new Map<Source, Entry>();
-  /** Our own adopted mirror sheets: never treated as page sheets. */
-  const ownSheets = new WeakSet<CSSStyleSheet>();
   const roots = new Set<ShadowRoot>();
+  /** Every root whose adoptedStyleSheets hold a given (ownerless) page sheet; its mirror goes into each. */
+  const adoptedRoots = new Map<CSSStyleSheet, Set<Root>>();
   const observers = new Map<Root, () => void>();
   /** Elements waiting for `load`, with the function that removes the listeners. */
   const waiting = new Map<Element, () => void>();
@@ -78,6 +80,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   const pendingRebuild = new Set<Source>();
   /** Sheets reported changed (CSS-in-JS): re-processed once per frame. */
   const pendingRefresh = new Set<CSSStyleSheet>();
+  /** Roots whose adopted sheets are re-checked at the next frame (`allAdopted`: every root). */
+  const pendingRoots = new Set<Root>();
+  let allAdopted = false;
   let cancelFrame: (() => void) | null = null;
   const now = deps.now ?? (() => performance.now());
 
@@ -269,9 +274,20 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   function flushFrame(): void {
     cancelFrame = null;
     if (!running) return;
-    const sheets = [...pendingRefresh];
-    pendingRefresh.clear();
-    sheets.forEach(refreshNow);
+    if (pendingRefresh.size || pendingRoots.size || allAdopted) {
+      pruneRoots();
+      const all: Root[] = [doc, ...roots];
+      all.forEach(pruneAdopted);
+      for (const r of allAdopted ? all : pendingRoots) {
+        if (r !== doc && !roots.has(r as ShadowRoot)) continue;
+        for (const s of r.adoptedStyleSheets) if (!writer.owns(s)) pendingRefresh.add(s);
+      }
+      pendingRoots.clear();
+      allAdopted = false;
+      const sheets = [...pendingRefresh];
+      pendingRefresh.clear();
+      sheets.forEach(refreshNow);
+    }
     flushRebuilds();
   }
 
@@ -283,6 +299,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
   function forget(source: Source): void {
     release(source);
     entries.delete(source);
+    if (!(source instanceof Element)) adoptedRoots.delete(source);
     varDefs.delete(source);
     pendingRebuild.delete(source);
     rebuildDefiners(vars.delete(source));
@@ -305,13 +322,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
       return;
     }
     mirrored.add(source);
-    if (source instanceof Element) {
-      writer.setMirror(source, css, entry.root);
-      return;
-    }
-    const before = new Set(entry.root.adoptedStyleSheets);
-    writer.setMirror(source, css, entry.root);
-    for (const s of entry.root.adoptedStyleSheets) if (!before.has(s)) ownSheets.add(s);
+    writer.setMirror(source, css, source instanceof Element ? [entry.root] : (adoptedRoots.get(source) ?? [entry.root]));
   }
 
   /** Count + build right away (observer, load, fetch, refresh paths); a first build is charged to the budget. */
@@ -411,6 +422,11 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     }
     const entry: Entry = { root, parsed: null };
     entries.set(source, entry);
+    if (!(source instanceof Element)) {
+      let held = adoptedRoots.get(source);
+      if (!held) adoptedRoots.set(source, (held = new Set()));
+      held.add(root);
+    }
     return { source, entry };
   }
 
@@ -425,7 +441,7 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     }
     // Links still loading are absent from styleSheets.
     for (const link of Array.from(root.querySelectorAll('link'))) if (isStylesheetLink(link)) push(link);
-    for (const sheet of root.adoptedStyleSheets ?? []) if (!ownSheets.has(sheet)) push(sheet);
+    for (const sheet of root.adoptedStyleSheets ?? []) if (!writer.owns(sheet)) push(sheet);
     return out;
   }
 
@@ -438,9 +454,27 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     return items;
   }
 
+  /** The root no longer holds the sheet: its mirror leaves that root (and the sheet is forgotten once no root holds it). */
+  function unhold(sheet: CSSStyleSheet, root: Root): void {
+    const held = adoptedRoots.get(sheet);
+    if (!held?.delete(root)) return;
+    if (held.size) writer.dropRoot(sheet, root); else forget(sheet);
+  }
+
   function pruneAdopted(root: Root): void {
-    for (const [source, entry] of [...entries]) {
-      if (entry.root === root && !(source instanceof Element) && !root.adoptedStyleSheets.includes(source)) forget(source);
+    for (const [sheet, held] of [...adoptedRoots]) {
+      if (held.has(root) && !root.adoptedStyleSheets.includes(sheet)) unhold(sheet, root);
+    }
+  }
+
+  /** Shadow roots whose host left the document are no longer watched (checked once per frame flush). */
+  function pruneRoots(): void {
+    for (const r of [...roots]) {
+      if (r.host.isConnected) continue;
+      roots.delete(r);
+      observers.get(r)?.();
+      observers.delete(r);
+      for (const sheet of [...adoptedRoots.keys()]) unhold(sheet, r);
     }
   }
 
@@ -611,6 +645,9 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     varDefs.clear();
     pendingRebuild.clear();
     pendingRefresh.clear();
+    pendingRoots.clear();
+    allAdopted = false;
+    adoptedRoots.clear();
     cancelFrame?.();
     cancelFrame = null;
   }
@@ -632,29 +669,36 @@ export function createPipeline(doc: Document, deps: PipelineDeps): Pipeline {
     if (running) guard(() => attachRoot(root));
   }
 
+  /** Runs inside the frame flush, after roots and adopted holdings were pruned. */
   function refreshNow(sheet: CSSStyleSheet): void {
-    if (!running || ownSheets.has(sheet)) return;
+    if (!running || writer.owns(sheet)) return;
     const node = sheet.ownerNode;
     if (node) {
       if (node.nodeType !== Node.ELEMENT_NODE || isOwnNode(node) || !node.isConnected) return;
       processNow(resolve(node as Element, node.getRootNode() as Root));
       return;
     }
-    const all: Root[] = [doc, ...roots];
-    all.forEach(pruneAdopted);
-    const root = all.find((r) => r.adoptedStyleSheets.includes(sheet));
-    if (root) processNow(resolve(sheet, root));
+    const holders = [doc, ...roots].filter((r) => r.adoptedStyleSheets.includes(sheet));
+    if (!holders.length) return;
+    for (const r of holders.slice(1)) resolve(sheet, r); // registers the other holders; the first is built below
+    processNow(resolve(sheet, holders[0]));
   }
 
   /** Coalesced: however often a sheet is reported within a frame, it is re-processed once. */
   function refreshSheet(sheet: CSSStyleSheet): void {
-    if (!running || ownSheets.has(sheet)) return;
+    if (!running || writer.owns(sheet)) return;
     pendingRefresh.add(sheet);
     requestFrame();
   }
 
+  function adoptedChanged(root?: Root): void {
+    if (!running) return;
+    if (root) pendingRoots.add(root); else allAdopted = true;
+    requestFrame();
+  }
+
   return {
-    start, update, detach, setDisabled, addRoot, refreshSheet,
+    start, update, detach, setDisabled, addRoot, refreshSheet, adoptedChanged,
     status: () => current,
     onStatus: (cb) => { statusListeners.push(cb); },
   };

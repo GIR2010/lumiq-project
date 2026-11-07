@@ -9,7 +9,6 @@ import { createPipeline } from './pipeline/pipeline';
 
 let controller: ReturnType<typeof createController> | null = null;
 let dead = false;
-const shadowRoots = new Set<WeakRef<ShadowRoot>>();
 
 function die(): void {
   dead = true;
@@ -44,32 +43,23 @@ controller = createController(document, {
   },
 });
 
-function rescanAdopted(root: Document | ShadowRoot): void {
-  for (const sheet of root.adoptedStyleSheets) pipeline.refreshSheet(sheet);
-}
-
 function realTarget(e: Event): EventTarget | undefined {
   return e.composedPath()[0];
 }
 function onShadow(e: Event): void {
   const sr = (realTarget(e) as Element | undefined)?.shadowRoot;
   if (!sr) return;
-  shadowRoots.add(new WeakRef(sr));
   pipeline.addRoot(sr);
 }
 function onAdopted(e: Event): void {
   const t = realTarget(e);
-  if (t instanceof Document) rescanAdopted(t);
-  else if (t instanceof Element && t.shadowRoot) rescanAdopted(t.shadowRoot);
+  if (t instanceof Document) pipeline.adoptedChanged(t);
+  else if (t instanceof Element && t.shadowRoot) pipeline.adoptedChanged(t.shadowRoot);
 }
 function onSheetChanged(e: Event): void {
   const t = realTarget(e);
   if (t instanceof Document) {
-    rescanAdopted(t);
-    for (const ref of shadowRoots) {
-      const sr = ref.deref();
-      if (sr) rescanAdopted(sr); else shadowRoots.delete(ref);
-    }
+    pipeline.adoptedChanged(); // an ownerless (constructed) sheet changed: it may be adopted anywhere
   } else if (t instanceof HTMLStyleElement || t instanceof HTMLLinkElement) {
     if (t.sheet) pipeline.refreshSheet(t.sheet);
   }

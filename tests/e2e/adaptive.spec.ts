@@ -168,3 +168,13 @@ test('CSS from a slow CDN: the body is never light between DOMContentLoaded and 
   expect(await page.evaluate(() => (window as unknown as { __flash: { light: boolean } }).__flash.light)).toBe(false);
   expect(await bodyBg(page)).toBeLessThan(DARK);
 });
+
+test('a constructed sheet shared by two shadow roots is mirrored into both; turning off cleans both', async ({ context, setSettings }) => {
+  const page = await open(context, 'shared-sheet.html');
+  await expect.poll(() => bgL(page.locator('x-a .inner'))).toBeLessThan(DARK);
+  await expect.poll(() => bgL(page.locator('x-b .inner'))).toBeLessThan(DARK);
+  await setSettings({ [SITE]: { on: false } });
+  await expect.poll(() => bgL(page.locator('x-a .inner'))).toBeGreaterThan(WHITE);
+  const counts = await page.evaluate(() => ['x-a', 'x-b'].map((t) => document.querySelector(t)!.shadowRoot!.adoptedStyleSheets.length));
+  expect(counts).toEqual([1, 1]);
+});
