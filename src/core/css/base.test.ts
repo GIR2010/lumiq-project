@@ -25,3 +25,9 @@ test('M3: color-scheme, pre/code, таблицы, hr и ::placeholder (§6.4)', 
   expect(css).toMatch(/hr\s*\{[^}]*border-color:\s*#eeeeee/);
   expect(css).toContain(`::placeholder { color: ${colors.textMuted}; }`);
 });
+
+test('базовые правила не задают scrollbar-color/scrollbar-width (ломают ::-webkit-scrollbar сайта)', () => {
+  const css = buildBaseCss(PRESETS[0].colors, fn, DEFAULT_ADJUSTMENTS);
+  expect(css).not.toMatch(/scrollbar-(color|width)/);
+  expect(css).toContain('color-scheme: dark');
+});

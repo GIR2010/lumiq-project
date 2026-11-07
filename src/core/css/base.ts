@@ -18,7 +18,6 @@ export function buildBaseCss(colors: StyleColors, fn: ColorFn, adj: Adjustments)
     `hr { border-color: ${border}; }\n` +
     `::placeholder { color: ${colors.textMuted}; }\n` +
     `::selection { background-color: ${colors.selection}; color: ${text}; }\n` +
-    `html { scrollbar-color: ${border} ${bg}; }\n` +
     `:focus-visible { outline-color: ${colors.link}; }\n`;
   if (adj.img > 0) css += `img, video, canvas, picture { filter: brightness(${1 - adj.img / 100}); }\n`;
   return css;
